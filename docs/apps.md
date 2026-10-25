@@ -1,0 +1,71 @@
+# Apps
+
+An app is a compose file plus routes and secrets, all managed in the interface. Images come from a registry;
+Pocketcloud does not build.
+
+## Creating one
+
+*Apps → New app*: a name (`a-z0-9-`, also the compose project name) and the compose file. For a single image the
+file is three lines:
+
+```yaml
+services:
+  web:
+    image: ghcr.io/you/site:latest
+```
+
+Then add a route (host, service, container port, public or internal), add secrets, and press *Deploy*.
+
+## What Pocketcloud changes in the file
+
+- `ports` are removed. Nothing is reachable except through Caddy and the routes.
+- Every service gets `restart: unless-stopped` and `no-new-privileges`.
+- The app's secrets are attached as an `env_file` to every service and are available as `${NAME}` for
+  interpolation in the file itself (`POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}`).
+- The `default` network becomes a bridge named `pc-<app>` with the subnet `172.30.<n>.0/24`; services get static
+  addresses in sorted order starting at `.10`. Routes point Caddy at those addresses.
+
+Refused: `build`, `privileged`, `cap_add`, `devices`, host networking or PID namespace, `sysctls`, extra networks,
+top-level `secrets`, and bind mounts of host paths. Files the app needs go into
+`/var/lib/pocketcloud/apps/<app>/files/` on the server and are referenced as `./files/...`.
+
+## Deploys
+
+*Deploy* pulls the images and runs `docker compose up --wait`. Services with a `healthcheck` must become healthy
+within three minutes, the others must be running. If that fails, the previous successful release (its rendered file
+and image digests are stored) is started again and the app shows `rolled_back` with the reason. The job page shows
+the compose output live; secret values are redacted from it and from container logs.
+
+*Start* brings an app up again without pulling. *Stop* removes the containers and the network, volumes stay.
+*Remove* at the bottom of the app page asks for the name and whether to delete volumes.
+
+## Secrets and environment
+
+Secrets are sealed with the master key and never shown again; *Replace* sets a new value. A `${NAME}` placeholder
+in the compose file is filled from the secret of that name, and the page warns about placeholders without one.
+The *Environment* table lists the `environment` entries of every service and edits them in place. Those edits
+rewrite the compose file through the YAML model, so comments in it are lost; use *Edit compose* for anything
+beyond values.
+
+## Routes
+
+The route form prefills the container port from `ports` or `expose` in the compose file and suggests a host for
+the first service without a route. `ports` are stripped at deploy time, so keeping them, or an `expose: [3000]`
+line, costs nothing and documents the port.
+
+Hosts are a configured domain itself (`example.com`) or one label below it (`shop.example.com`), because that is
+what the certificate covers. For a `www.` alias add a second route to the same service. Any other name below a
+configured domain, and so without a route, redirects to the domain itself (`https://example.com/`, temporary
+redirect). Public routes take precedence over that fallback. `public`
+routes are served on the public address behind the WAF (see security.md), which can be switched off per route; `internal` routes only on the WireGuard address and only resolve through
+the VPN. Caddy terminates TLS and forwards plain HTTP with `X-Forwarded-Proto: https`.
+
+## Databases
+
+Run them inside the app's compose file with a named volume, as in the example on the *New app* page. There is no
+managed database and no backup in this version; keep that in mind before putting anything irreplaceable there.
+
+## Private registries
+
+*Registries*: host, username and token, stored encrypted. Every pull of every app uses them. For GitHub Container
+Registry use a classic personal access token with `read:packages`.

@@ -1,0 +1,22 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1>Registries</h1>
+<p class="muted">Credentials for private images. Every pull uses them; stored encrypted.</p>
+<table>
+  <thead><tr><th>Registry</th><th>Username</th><th>Updated</th><th></th></tr></thead>
+  <tbody>
+  {% for r in registries %}
+  <tr><td><strong>{{ r.host }}</strong></td><td>{{ r.username }}</td><td class="muted small">{{ r.updated }}</td>
+  <td><form method="post" action="/registries/{{ r.id }}/delete" class="inline" data-confirm="Remove credentials for {{ r.host }}?"><button class="link danger">remove</button></form></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<h2>Add or replace</h2>
+<form method="post" action="/registries" class="row" autocomplete="off">
+  <label>Registry <input name="host" placeholder="ghcr.io" required></label>
+  <label>Username <input name="username" required></label>
+  <label>Token <input name="password" class="secret" required autocomplete="off" spellcheck="false"></label>
+  <button class="primary">Save</button>
+</form>
+<p class="muted small">For ghcr.io use a classic personal access token with <code>read:packages</code>.</p>
+{% endblock %}

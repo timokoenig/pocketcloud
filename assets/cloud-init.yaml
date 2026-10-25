@@ -1,0 +1,37 @@
+#cloud-config
+hostname: ${HOSTNAME}
+users:
+  - name: ${SSH_USER}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${SSH_PUB}
+ssh_pwauth: false
+disable_root: true
+ssh_deletekeys: true
+ssh_genkeytypes: [ed25519]
+# sshd, sysctl, fail2ban, unattended-upgrades and journald settings come with install.sh (assets/hardening),
+# which runs again on every upgrade; only the bootstrap firewall has to exist before that.
+write_files:
+  - path: /etc/nftables.conf
+    content: |
+      flush ruleset
+      table inet filter {
+        chain input {
+          type filter hook input priority 0; policy drop;
+          iif lo accept
+          ct state established,related accept
+          ct state invalid drop
+          ip protocol icmp accept
+          ip6 nexthdr icmpv6 accept
+          tcp dport 22 accept
+        }
+        chain forward { type filter hook forward priority 0; policy drop; }
+        chain output { type filter hook output priority 0; policy accept; }
+      }
+runcmd:
+  - systemctl disable --now ufw || true
+  - systemctl enable --now nftables
+  - nft -f /etc/nftables.conf

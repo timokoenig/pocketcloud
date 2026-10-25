@@ -1,0 +1,7 @@
+/var/log/pocketcloud/*.log {
+  weekly
+  rotate 8
+  compress
+  missingok
+  notifempty
+}

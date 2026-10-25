@@ -1,0 +1,52 @@
+[package]
+name = "pocketcloud"
+version = "0.1.0"
+edition = "2021"
+description = "Your own small cloud on one Hetzner server: hardened, WireGuard-only management, compose apps."
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+toml = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+axum = { version = "0.8", features = ["macros", "form"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+tower-http = { version = "0.6", features = ["trace", "set-header"] }
+askama = "0.14"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono"] }
+chrono = { version = "0.4", features = ["serde"] }
+bollard = "0.18"
+instant-acme = { version = "0.8", default-features = false, features = ["hyper-rustls", "ring"] }
+rcgen = "0.13"
+chacha20poly1305 = "0.10"
+argon2 = { version = "0.5", features = ["std"] }
+rand = "0.8"
+bip39 = { version = "2", features = ["rand"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hickory-proto = "0.24"
+qrcode = "0.14"
+hex = "0.4"
+base64 = "0.22"
+sha2 = "0.10"
+zeroize = "1"
+dialoguer = "0.11"
+console = "0.15"
+directories = "5"
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+futures-util = "0.3"
+semver = "1"
+x509-parser = "0.16"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -1,0 +1,33 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1>VPN devices</h1>
+{% if let Some(n) = new_peer %}
+<div class="card stack">
+  <h2>{{ n.name }} is ready</h2>
+  <p>Import this configuration into WireGuard now. It contains the device's private key and is <strong>not stored</strong>; close this page and it is gone. Scan the code with the WireGuard app, or download the file: imported, the tunnel is called <code>{{ n.file_name }}</code> without the extension.</p>
+  <p><a class="button primary" href="/vpn/download/{{ n.download_token }}">Download {{ n.file_name }}</a></p>
+  <div class="row qr">
+    <div class="qr-code">{{ n.qr_svg|safe }}</div>
+    <pre class="log small">{{ n.config }}</pre>
+  </div>
+</div>
+{% endif %}
+<table>
+  <thead><tr><th>Device</th><th>Address</th><th>Scope</th><th>Last handshake</th><th>From</th><th>Added</th><th></th></tr></thead>
+  <tbody>
+  {% for p in peers %}
+  <tr>
+    <td><strong>{{ p.name }}</strong></td><td>{{ p.ip }}</td><td><span class="tag {{ p.scope }}">{{ p.scope }}</span></td>
+    <td>{{ p.last_handshake }}</td><td class="muted small">{{ p.endpoint }}</td><td class="muted small">{{ p.created }}</td>
+    <td><form method="post" action="/vpn/{{ p.id }}/delete" class="inline" data-confirm="Revoke {{ p.name }}? Its tunnel closes immediately."><button class="link danger">revoke</button></form></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<h2>Add a device</h2>
+<form method="post" action="/vpn" class="row">
+  <label>Name <input name="name" placeholder="phone" pattern="[A-Za-z0-9_-]{1,32}" required></label>
+  <label>Scope <select name="scope"><option value="web">web: interface and internal routes</option><option value="full">full: also ssh and the app networks ({{ apps_cidr }})</option></select></label>
+  <button class="primary">Create</button>
+</form>
+{% endblock %}

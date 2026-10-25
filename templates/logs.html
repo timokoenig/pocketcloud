@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+{% block content %}
+<p><a href="/apps/{{ app.id }}">← {{ app.name }}</a></p>
+<div class="row between">
+  <h1>{{ app.name }} · {{ service }}</h1>
+  <form method="get" class="row inline">
+    <label>lines <input name="tail" type="number" value="{{ tail }}" min="10" max="5000" class="short"></label>
+    <button>Reload</button>
+  </form>
+</div>
+<pre class="log">{{ log }}</pre>
+{% endblock %}

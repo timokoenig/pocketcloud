@@ -1,0 +1,8 @@
+[Unit]
+Description=AIDE file integrity check for Pocketcloud
+
+[Service]
+Type=oneshot
+Nice=19
+IOSchedulingClass=idle
+ExecStart=/bin/bash -c 'aide --check -c /etc/aide/aide.conf > /var/log/pocketcloud/aide.log.new 2>&1; rc=$?; echo "exit $rc at $(date -Is)" >> /var/log/pocketcloud/aide.log.new; mv -f /var/log/pocketcloud/aide.log.new /var/log/pocketcloud/aide.log; exit 0'

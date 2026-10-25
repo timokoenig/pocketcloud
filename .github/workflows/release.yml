@@ -1,0 +1,53 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: goto-bus-stop/setup-zig@v2
+      - run: cargo install cargo-zigbuild
+      - run: cargo zigbuild --release --target ${{ matrix.target }}
+      - run: cp target/${{ matrix.target }}/release/pocketcloud pocketcloud-${{ matrix.target }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: pocketcloud-${{ matrix.target }}
+          generate_release_notes: true
+  caddy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            goarch: amd64
+          - target: aarch64-unknown-linux-musl
+            goarch: arm64
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+      - run: GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 xcaddy build --with github.com/corazawaf/coraza-caddy/v2 --output caddy-${{ matrix.target }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: caddy-${{ matrix.target }}
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+      - run: cp target/release/pocketcloud pocketcloud-aarch64-apple-darwin
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: pocketcloud-aarch64-apple-darwin

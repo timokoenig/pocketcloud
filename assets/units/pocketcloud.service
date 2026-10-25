@@ -1,0 +1,29 @@
+[Unit]
+Description=Pocketcloud daemon
+After=network-online.target docker.service wg-quick@wg0.service caddy.service
+Wants=network-online.target docker.service
+
+[Service]
+ExecStart=/usr/local/bin/pocketcloud server
+Restart=always
+RestartSec=3
+Environment=RUST_LOG=info
+# root: docker socket, nftables, wireguard. Confined where that does not get in the way.
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RuntimeDirectory=pocketcloud
+RuntimeDirectoryMode=0700
+StateDirectory=pocketcloud
+StateDirectoryMode=0700
+LogsDirectory=pocketcloud
+
+[Install]
+WantedBy=multi-user.target

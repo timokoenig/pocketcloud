@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ base.title }} · {{ base.name }}</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+{% block head %}{% endblock %}
+</head>
+<body>
+<header>
+  <nav>
+    <a class="brand" href="/">pocketcloud <span>{{ base.name }}</span></a>
+    <a href="/">Apps</a>
+    <a href="/vpn">VPN</a>
+    <a href="/registries">Registries</a>
+    <a href="/server">Server</a>
+    <a href="/audit">Audit</a>
+    <form method="post" action="/logout" class="inline right"><span class="muted">{{ base.user }}</span> <button class="link">log out</button></form>
+  </nav>
+</header>
+<main>
+{% if let Some(m) = base.msg %}<div class="flash ok">{{ m }}</div>{% endif %}
+{% if let Some(e) = base.error %}<div class="flash err">{{ e }}</div>{% endif %}
+{% block content %}{% endblock %}
+</main>
+<footer>pocketcloud {{ base.version }}</footer>
+</body>
+</html>

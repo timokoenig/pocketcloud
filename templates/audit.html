@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1>Audit log</h1>
+<table class="compact">
+  <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for e in entries %}
+  <tr><td class="muted small">{{ e.at }}</td><td>{{ e.username }}</td><td><code>{{ e.action }}</code></td><td class="small">{{ e.detail }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

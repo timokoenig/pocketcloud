@@ -1,0 +1,8 @@
+{% extends "layout.html" %}
+{% block head %}{% if running %}<meta http-equiv="refresh" content="2">{% endif %}{% endblock %}
+{% block content %}
+<p>{% if let Some(a) = app_id %}<a href="/apps/{{ a }}">← {{ app_name }}</a>{% else %}<a href="/server">← server</a>{% endif %}</p>
+<h1>{{ kind }} #{{ id }} <span class="status {{ status }}">{{ status }}</span></h1>
+<p class="muted small">started {{ created }}{% if !finished.is_empty() %} · finished {{ finished }}{% endif %}{% if running %} · refreshing{% endif %}</p>
+<pre class="log" id="log">{{ log }}</pre>
+{% endblock %}

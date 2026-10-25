@@ -1,0 +1,37 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="row between">
+  <h1>Apps</h1>
+  <a class="button primary" href="/apps/new">New app</a>
+</div>
+{% if !docker_ok %}<div class="flash err">Docker is not reachable. Deploys will fail; check the server page.</div>{% endif %}
+{% if let Some(c) = cert_problem %}<div class="flash err">Certificate problem: {{ c }}</div>{% endif %}
+{% if host.reboot_required %}<div class="flash warn">The server needs a reboot for pending updates. <a href="/server">Server page</a></div>{% endif %}
+{% if apps.is_empty() %}
+<p class="muted">No apps yet. Create one from a compose file; images come from a registry, builds are not supported.</p>
+{% else %}
+<table>
+  <thead><tr><th>Name</th><th>Status</th><th>Hosts</th><th>Updated</th></tr></thead>
+  <tbody>
+  {% for a in apps %}
+  <tr>
+    <td><a href="/apps/{{ a.id }}"><strong>{{ a.name }}</strong></a></td>
+    <td><span class="status {{ a.status }}">{{ a.status }}</span>{% if !a.status_detail.is_empty() %} <span class="muted small" title="{{ a.status_detail }}">details</span>{% endif %}</td>
+    <td class="small">{{ a.hosts }}</td>
+    <td class="muted small">{{ a.updated }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<h2>Recent jobs</h2>
+{% if jobs.is_empty() %}<p class="muted">none</p>{% else %}
+<table class="compact">
+  <tbody>
+  {% for j in jobs %}
+  <tr><td><a href="/jobs/{{ j.id }}">#{{ j.id }} {{ j.kind }}</a></td><td>{{ j.app_name }}</td><td><span class="status {{ j.status }}">{{ j.status }}</span></td><td class="muted small">{{ j.created }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,65 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1>Server</h1>
+<div class="grid">
+  <div class="card">
+    <h2>Host</h2>
+    <dl>
+      <dt>Hostname</dt><dd>{{ host.hostname }}</dd>
+      <dt>Addresses</dt><dd>{% for ip in public_ips %}<div>{{ ip }}</div>{% endfor %}</dd>
+      <dt>Uptime</dt><dd>{{ uptime }} · load {{ host.load }}</dd>
+      <dt>Memory</dt><dd>{{ mem_used_pct }}% of {{ host.mem_total_mb }} MB</dd>
+      <dt>Disk</dt><dd>{{ disk_used_pct }}% of {{ "{:.0}"|format(host.disk_total_gb) }} GB</dd>
+      <dt>Daemon</dt><dd>{{ base.version }}, started {{ daemon_started }}</dd>
+      <dt>Interface</dt><dd>https://{{ interface_host }} · VPN port {{ vpn_port }}/udp</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <h2>Services</h2>
+    <ul class="plain">
+    {% for s in host.services %}<li><span class="dot {% if s.1 %}ok{% else %}bad{% endif %}"></span>{{ s.0 }}</li>{% endfor %}
+    </ul>
+  </div>
+  <div class="card">
+    <h2>Certificates</h2>
+    <table class="compact"><tbody>
+    {% for c in certs %}
+    <tr><td>*.{{ c.domain }}</td><td>{% if c.last_error.is_empty() %}until {{ c.not_after }} ({{ c.days_left }} days){% else %}<span class="status failed">error</span> <span class="small">{{ c.last_error }}</span>{% endif %}</td></tr>
+    {% endfor %}
+    {% if certs.is_empty() %}<tr><td class="muted">not issued yet{% for d in domains %} · {{ d }}{% endfor %}</td></tr>{% endif %}
+    </tbody></table>
+    <form method="post" action="/server/renew-certificates" class="inline" data-confirm="Request new certificates now?"><button>Renew now</button></form>
+  </div>
+  <div class="card">
+    <h2>Updates</h2>
+    {% if host.reboot_required %}<div class="flash warn">reboot required</div>{% endif %}
+    <p>{{ host.pending_updates.len() }} packages pending <span class="muted small">(checked {{ pending_checked }})</span></p>
+    {% if !host.pending_updates.is_empty() %}<p class="small muted">{{ host.pending_updates.join(", ") }}</p>{% endif %}
+    <div class="row">
+      <form method="post" action="/server/check-updates" class="inline"><button>Check</button></form>
+      <form method="post" action="/server/upgrade" class="inline" data-confirm="Install all pending updates now?"><button>Upgrade</button></form>
+      <form method="post" action="/server/reboot" class="inline row"><input name="confirm" placeholder="type reboot" class="short" required autocomplete="off"><button class="danger">Reboot</button></form>
+    </div>
+    <p class="muted small">Security updates install automatically every day; reboots never happen on their own.</p>
+  </div>
+</div>
+<h2>Web application firewall{% if !waf_available %} <span class="status failed">unavailable</span>{% endif %}</h2>
+{% if !waf_available %}
+<p class="muted">The installed Caddy has no Coraza module, public routes run without the WAF. <code>pocketcloud upgrade &lt;name&gt;</code> installs the bundled build.</p>
+{% else if waf_events.is_empty() %}
+<p class="muted">no blocked requests in the last 7 days</p>
+{% else %}
+<table class="compact">
+  <thead><tr><th>Time</th><th>Client</th><th>Host</th><th>Request</th><th>Id</th></tr></thead>
+  <tbody>
+  {% for e in waf_events %}
+  <tr><td class="muted small">{{ e.at }}</td><td class="small">{{ e.client }}</td><td class="small">{{ e.host }}</td><td class="small">{{ e.uri }}</td><td class="small muted">{{ e.id }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<h2>AIDE file integrity <span class="muted small">last run {{ aide_checked }}</span></h2>
+<pre class="log small">{{ host.aide_report }}</pre>
+<h2>Audit events this week</h2>
+<pre class="log small">{{ host.audit_summary }}</pre>
+{% endblock %}
