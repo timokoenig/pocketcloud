@@ -59,6 +59,8 @@ pub struct ServiceInfo {
     pub port: Option<u16>,
     /// `environment` entries as written
     pub env: Vec<(String, String)>,
+    /// hardening hints: what the service does not do that it could
+    pub hints: Vec<String>,
 }
 
 pub struct Inspection {
@@ -79,10 +81,38 @@ pub fn inspect(compose: &str) -> Result<Inspection> {
             .and_then(|p| p.iter().find_map(container_port))
             .or_else(|| svc.get("expose").and_then(|e| e.as_sequence()).and_then(|e| e.iter().find_map(container_port)));
         let env = environment_entries(svc.get("environment"));
-        out.push(ServiceInfo { name, port, env });
+        let hints = hardening_hints(svc);
+        out.push(ServiceInfo { name, port, env, hints });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Inspection { services: out, placeholders: placeholders(compose) })
+}
+
+fn hardening_hints(svc: &Value) -> Vec<String> {
+    let mut h = Vec::new();
+    let image = svc.get("image").and_then(|i| i.as_str()).unwrap_or("");
+    if !image.contains("@sha256:") {
+        let tag = image.rsplit('/').next().unwrap_or(image).split_once(':').map(|(_, t)| t);
+        match tag {
+            None => h.push("image has no tag, so `latest` is pulled; pin a version".into()),
+            Some("latest") => h.push("image tag `latest` changes under you; pin a version".into()),
+            _ => {}
+        }
+    }
+    if svc.get("user").is_none() {
+        h.push("no `user`: runs as root unless the image switches user itself".into());
+    }
+    if svc.get("read_only").and_then(|v| v.as_bool()) != Some(true) {
+        h.push("not `read_only`: a writable root filesystem; add `tmpfs` for paths that need writes".into());
+    }
+    let drops_all = svc.get("cap_drop").and_then(|v| v.as_sequence()).map(|s| s.iter().any(|c| c.as_str().map(|c| c.eq_ignore_ascii_case("all")).unwrap_or(false))).unwrap_or(false);
+    if !drops_all {
+        h.push("no `cap_drop: [ALL]`: keeps the default capabilities".into());
+    }
+    if svc.get("healthcheck").is_none() {
+        h.push("no `healthcheck`: deploys cannot wait for it to be healthy".into());
+    }
+    h
 }
 
 /// The container side of a `ports`/`expose` entry: "127.0.0.1:3000:3000", "8080:80/tcp", "80", or a mapping with `target`.
@@ -386,6 +416,8 @@ mod tests {
         assert_eq!(i.services[0].env, vec![("PGUSER".to_string(), "app".to_string()), ("PGPASSWORD".to_string(), "${PG}".to_string())]);
         assert_eq!(i.services[1].port, Some(3000));
         assert_eq!(i.placeholders, vec!["SECRET", "PG"]);
+        assert!(i.services[1].hints.iter().any(|h| h.contains("no tag")));
+        assert!(i.services[1].hints.iter().any(|h| h.contains("read_only")));
         let c2 = set_environment(c, "web", "A", Some("2")).unwrap();
         let c2 = set_environment(&c2, "db", "PGUSER", None).unwrap();
         let i2 = inspect(&c2).unwrap();

@@ -125,6 +125,8 @@ pub struct HostStatus {
     pub aide_checked: String,
     pub audit_summary: String,
     pub services: Vec<(String, bool)>,
+    /// newest GitHub release when it is not the running version
+    pub latest_version: String,
 }
 
 pub async fn quick_status() -> HostStatus {
@@ -211,6 +213,40 @@ pub async fn waf_events(limit: usize) -> Vec<WafEvent> {
     events.reverse();
     events.truncate(limit);
     events
+}
+
+/// Newest release tag on GitHub, if newer than this build. Empty when unknown or current.
+pub async fn newer_release() -> String {
+    let client = reqwest::Client::builder().user_agent("pocketcloud").timeout(std::time::Duration::from_secs(15)).build();
+    let Ok(client) = client else { return String::new() };
+    let Ok(resp) = client.get("https://api.github.com/repos/timokoenig/pocketcloud/releases/latest").send().await else { return String::new() };
+    let Ok(v) = resp.json::<serde_json::Value>().await else { return String::new() };
+    let tag = v.get("tag_name").and_then(|t| t.as_str()).unwrap_or("").trim_start_matches('v').to_string();
+    let parse = |s: &str| s.split('.').map(|p| p.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
+    if !tag.is_empty() && parse(&tag) > parse(env!("CARGO_PKG_VERSION")) {
+        tag
+    } else {
+        String::new()
+    }
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct JailStatus {
+    pub jail: String,
+    pub banned: Vec<String>,
+    pub total: String,
+}
+
+/// Active fail2ban bans per jail.
+pub async fn fail2ban_status() -> Vec<JailStatus> {
+    let mut out = Vec::new();
+    for jail in ["sshd", "pocketcloud-waf"] {
+        let Ok(text) = run("fail2ban-client", &["status", jail]).await else { continue };
+        let field = |k: &str| text.lines().find(|l| l.contains(k)).and_then(|l| l.split(':').nth(1)).map(|v| v.trim().to_string()).unwrap_or_default();
+        let banned: Vec<String> = field("Banned IP list").split_whitespace().map(str::to_string).collect();
+        out.push(JailStatus { jail: jail.to_string(), banned, total: field("Total banned") });
+    }
+    out
 }
 
 pub async fn audit_summary() -> String {

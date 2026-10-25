@@ -14,7 +14,7 @@ if [[ ! -x /usr/local/bin/pocketcloud ]]; then
   apt-get -y -qq -o Dpkg::Options::=--force-confold full-upgrade >/dev/null
   apt-get -y -qq autoremove >/dev/null
 fi
-apt-get install -y -qq ca-certificates curl gnupg nftables fail2ban unattended-upgrades auditd aide aide-common wireguard-tools jq debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+apt-get install -y -qq ca-certificates curl gnupg nftables fail2ban unattended-upgrades auditd aide aide-common wireguard-tools jq restic debian-keyring debian-archive-keyring apt-transport-https >/dev/null
 
 if ! command -v docker >/dev/null; then
   log "docker engine"
@@ -49,6 +49,14 @@ if ! command -v caddy >/dev/null; then
   apt-get update -qq
   apt-get install -y -qq caddy >/dev/null
 fi
+if ! command -v trivy >/dev/null; then
+  log "trivy"
+  curl -fsSL https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor -o /etc/apt/keyrings/trivy.gpg --yes
+  echo "deb [signed-by=/etc/apt/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" > /etc/apt/sources.list.d/trivy.list
+  apt-get update -qq
+  apt-get install -y -qq trivy >/dev/null
+fi
+
 # Caddy with the Coraza WAF: the packaged binary stays as fallback (official custom-build procedure)
 if [[ -f "$STAGE/caddy" ]]; then
   log "caddy with coraza"
@@ -108,6 +116,7 @@ if ! cmp -s "$STAGE/hardening/sshd.rendered" "$SSHD_CONF"; then
   fi
 fi
 put "$STAGE/hardening/sysctl.conf" /etc/sysctl.d/90-hardening.conf 0644 && sysctl --system >/dev/null
+put "$STAGE/hardening/fail2ban-waf.conf" /etc/fail2ban/filter.d/pocketcloud-waf.conf 0644 || true
 put "$STAGE/hardening/fail2ban.local" /etc/fail2ban/jail.local 0644 || true
 put "$STAGE/hardening/apt-unattended.conf" /etc/apt/apt.conf.d/52unattended-upgrades-local 0644 || true
 install -d /etc/systemd/journald.conf.d
@@ -118,6 +127,23 @@ log "pocketcloud files"
 install -m 0755 "$STAGE/pocketcloud" /usr/local/bin/pocketcloud.new
 mv -f /usr/local/bin/pocketcloud.new /usr/local/bin/pocketcloud
 [[ -f "$STAGE/config.toml" ]] && install -m 0600 "$STAGE/config.toml" /etc/pocketcloud/config.toml
+# older configs carried the cloud token; the server only needs zone access
+if grep -q '^token = ' /etc/pocketcloud/config.toml 2>/dev/null; then
+  python3 - /etc/pocketcloud/config.toml <<'EOF'
+import re, sys
+p = sys.argv[1]; s = open(p).read()
+m = re.search(r'^token = (".*")$', s, re.M); d = re.search(r'^dns_token = "(.*)"$', s, re.M)
+if m:
+    if d is None or d.group(1) == "":
+        s = re.sub(r'^dns_token = "".*\n', '', s, flags=re.M)
+        s = s.replace(m.group(0), "dns_token = " + m.group(1), 1)
+    else:
+        s = s.replace(m.group(0) + "\n", "", 1)
+    s = re.sub(r'^(server_id|firewall_id) = .*\n', '', s, flags=re.M)
+    open(p, "w").write(s)
+EOF
+  log "removed the cloud token from the server config"
+fi
 [[ -f "$STAGE/master.key" ]] && install -m 0600 "$STAGE/master.key" /etc/pocketcloud/master.key
 install -m 0644 "$STAGE/units/pocketcloud.service" /etc/systemd/system/
 install -m 0644 "$STAGE/units/pocketcloud-aide.service" "$STAGE/units/pocketcloud-aide.timer" /etc/systemd/system/

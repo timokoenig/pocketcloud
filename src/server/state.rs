@@ -14,10 +14,10 @@ pub struct State {
     pub db: Db,
     pub key: MasterKey,
     pub docker: Option<bollard::Docker>,
-    pub hetzner: Hetzner,
+    /// DNS zone access (certificate challenge, public records); the server has no cloud token
     pub dns_api: Hetzner,
     pub internal_names: InternalNames,
-    /// Public addresses of the server, from the Hetzner API
+    /// Public addresses of the server, read from its own interface
     pub public_ips: RwLock<Vec<String>>,
     pub reconcile_lock: Mutex<()>,
     pub host: RwLock<HostStatus>,

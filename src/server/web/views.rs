@@ -87,6 +87,19 @@ pub struct Dashboard {
     pub host: HostStatus,
     pub docker_ok: bool,
     pub cert_problem: Option<String>,
+    pub backup_warning: Option<String>,
+}
+
+pub struct BackupView {
+    pub enabled: bool,
+    pub repo: String,
+    pub time: String,
+    pub last_ok: String,
+    pub last_error: String,
+    pub last_snapshot: String,
+    pub snapshots: String,
+    pub size: String,
+    pub last_check: String,
 }
 
 #[derive(Template)]
@@ -106,6 +119,10 @@ pub struct AppView {
     pub subnet: String,
     pub created: String,
     pub updated: String,
+    /// all | none | ports
+    pub egress_mode: String,
+    pub egress_ports: String,
+    pub backup: bool,
 }
 
 impl AppView {
@@ -119,6 +136,12 @@ impl AppView {
             subnet: crate::firewall::app_subnet(a.net_index as u32),
             created: short_time(&a.created),
             updated: ago(&a.updated),
+            egress_mode: match a.egress.as_str() {
+                "all" | "none" => a.egress.clone(),
+                _ => "ports".into(),
+            },
+            egress_ports: if matches!(a.egress.as_str(), "all" | "none") { String::new() } else { a.egress.clone() },
+            backup: a.backup != 0,
         }
     }
 }
@@ -130,6 +153,7 @@ pub struct RouteView {
     pub port: i64,
     pub expose: String,
     pub waf: bool,
+    pub headers: bool,
 }
 
 pub struct SecretView {
@@ -142,6 +166,22 @@ pub struct ReleaseView {
     pub outcome: String,
     pub created: String,
     pub images: Vec<String>,
+    /// "2 critical, 5 high" or empty
+    pub scan: String,
+    pub scan_bad: bool,
+    pub findings: Vec<String>,
+}
+
+pub fn scan_summary(json: &str) -> (String, bool, Vec<String>) {
+    let scans: Vec<crate::server::deploy::ImageScan> = serde_json::from_str(json).unwrap_or_default();
+    if scans.is_empty() {
+        return (String::new(), false, vec![]);
+    }
+    let (c, h) = scans.iter().fold((0, 0), |(c, h), s| (c + s.critical, h + s.high));
+    let errors: Vec<&str> = scans.iter().filter(|s| !s.error.is_empty()).map(|s| s.error.as_str()).collect();
+    let text = if errors.is_empty() { format!("{c} critical, {h} high") } else { format!("scan failed: {}", errors.join("; ")) };
+    let findings = scans.iter().flat_map(|s| s.findings.iter().map(move |f| format!("{}: {f}", s.image))).collect();
+    (text, c > 0, findings)
 }
 
 #[derive(Template)]
@@ -165,6 +205,10 @@ pub struct AppShow {
     pub env: Vec<EnvView>,
     /// `${NAME}` placeholders in the compose file without a secret
     pub missing: Vec<String>,
+    /// (service, hint)
+    pub hardening: Vec<(String, String)>,
+    /// backups are configured for this installation; the app's own switch is `app.backup`
+    pub backup_enabled: bool,
 }
 
 pub struct ServiceHint {
@@ -280,6 +324,10 @@ pub struct ServerPage {
     pub aide_checked: String,
     pub waf_available: bool,
     pub waf_events: Vec<crate::server::system::WafEvent>,
+    pub jails: Vec<crate::server::system::JailStatus>,
+    /// newest release on GitHub when it differs from the running version
+    pub newer_release: String,
+    pub backup: BackupView,
 }
 
 pub struct AuditView {

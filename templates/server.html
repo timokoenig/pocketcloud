@@ -10,7 +10,7 @@
       <dt>Uptime</dt><dd>{{ uptime }} · load {{ host.load }}</dd>
       <dt>Memory</dt><dd>{{ mem_used_pct }}% of {{ host.mem_total_mb }} MB</dd>
       <dt>Disk</dt><dd>{{ disk_used_pct }}% of {{ "{:.0}"|format(host.disk_total_gb) }} GB</dd>
-      <dt>Daemon</dt><dd>{{ base.version }}, started {{ daemon_started }}</dd>
+      <dt>Daemon</dt><dd>{{ base.version }}, started {{ daemon_started }}{% if !newer_release.is_empty() %} · <span class="tag err">release {{ newer_release }} available</span> <span class="muted small">pocketcloud upgrade</span>{% endif %}</dd>
       <dt>Interface</dt><dd>https://{{ interface_host }} · VPN port {{ vpn_port }}/udp</dd>
     </dl>
   </div>
@@ -43,10 +43,42 @@
     <p class="muted small">Security updates install automatically every day; reboots never happen on their own.</p>
   </div>
 </div>
+{% if backup.enabled %}
+<h2>Backups</h2>
+<div class="card">
+  {% if !backup.last_error.is_empty() %}<div class="flash err">last run failed: {{ backup.last_error }}</div>{% endif %}
+  <dl>
+    <dt>Repository</dt><dd><code>{{ backup.repo }}</code></dd>
+    <dt>Schedule</dt><dd>nightly at {{ backup.time }} server time · snapshots are kept for 30 days, then deleted · integrity check on Sundays</dd>
+    <dt>Last success</dt><dd>{{ backup.last_ok }}{% if !backup.last_snapshot.is_empty() %} · snapshot <code>{{ backup.last_snapshot }}</code>{% endif %}</dd>
+    <dt>Snapshots</dt><dd>{% if backup.snapshots.is_empty() %}none yet{% else %}{{ backup.snapshots }}{% if !backup.size.is_empty() %} · {{ backup.size }} in the backup set{% endif %}{% endif %}</dd>
+    <dt>Last check</dt><dd>{{ backup.last_check }}</dd>
+  </dl>
+  <form method="post" action="/server/backup" class="inline"><button>Back up now</button></form>
+  <p class="muted small">Contents: the pocketcloud database, the server config, and for every app with backups on its volumes, files and a dump of each postgres or mysql service. Never the master key: the recovery phrase is its backup. Restore: <code>pocketcloud backup &lt;name&gt; password</code> gives the restic password.</p>
+</div>
+{% endif %}
 <h2>Web application firewall{% if !waf_available %} <span class="status failed">unavailable</span>{% endif %}</h2>
 {% if !waf_available %}
 <p class="muted">The installed Caddy has no Coraza module, public routes run without the WAF. <code>pocketcloud upgrade &lt;name&gt;</code> installs the bundled build.</p>
-{% else if waf_events.is_empty() %}
+{% else %}
+<h3>Banned clients</h3>
+<table class="compact">
+  <thead><tr><th>Jail</th><th>Banned now</th><th>Ever</th><th></th></tr></thead>
+  <tbody>
+  {% for j in jails %}
+  <tr>
+    <td><code>{{ j.jail }}</code></td>
+    <td class="small">{% if j.banned.is_empty() %}<span class="muted">none</span>{% else %}{% for ip in j.banned %}<form method="post" action="/server/unban" class="inline"><input type="hidden" name="jail" value="{{ j.jail }}"><input type="hidden" name="ip" value="{{ ip }}"><code>{{ ip }}</code> <button class="link" title="lift the ban">unban</button></form> {% endfor %}{% endif %}</td>
+    <td class="small muted">{{ j.total }}</td>
+    <td></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted small">10 WAF blocks in 10 minutes, or 3 failed ssh logins, ban the client for an hour at the firewall.</p>
+<h3>Blocked requests</h3>
+{% if waf_events.is_empty() %}
 <p class="muted">no blocked requests in the last 7 days</p>
 {% else %}
 <table class="compact">
@@ -57,6 +89,7 @@
   {% endfor %}
   </tbody>
 </table>
+{% endif %}
 {% endif %}
 <h2>AIDE file integrity <span class="muted small">last run {{ aide_checked }}</span></h2>
 <pre class="log small">{{ host.aide_report }}</pre>

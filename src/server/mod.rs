@@ -1,4 +1,5 @@
 pub mod acme;
+pub mod backup;
 pub mod caddy;
 pub mod compose;
 pub mod config;
@@ -31,9 +32,25 @@ pub async fn run(args: ServerArgs) -> Result<()> {
         ServerCommand::Firewall => {
             let state = build_state(config).await?;
             let apps = db::apps(&state.db).await?;
-            let bridges: Vec<String> = apps.iter().map(|a| crate::firewall::bridge_name(&a.name)).collect();
+            let bridges: Vec<(String, String)> = apps.iter().map(|a| (crate::firewall::bridge_name(&a.name), a.egress.clone())).collect();
             let wan = system::wan_interface().await.unwrap_or_else(|_| "eth0".into());
             print!("{}", crate::firewall::render(&crate::firewall::FirewallSpec { wan: &wan, vpn_port: state.config.vpn.port, bridges: &bridges }));
+            Ok(())
+        }
+        ServerCommand::Backup => {
+            let state = build_state(config).await?;
+            let id = backup::spawn_job(&state).await?;
+            loop {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                let job = db::job(&state.db, id).await?.ok_or_else(|| anyhow::anyhow!("job vanished"))?;
+                if job.status != "running" && job.status != "queued" {
+                    println!("backup job #{id}: {}", job.status);
+                    if job.status != "done" {
+                        std::process::exit(1);
+                    }
+                    break;
+                }
+            }
             Ok(())
         }
         ServerCommand::Apply => {
@@ -86,13 +103,11 @@ async fn build_state(config: Config) -> Result<Shared> {
         }
     }
     let docker = if config.dev { None } else { docker::connect().ok() };
-    let hetzner = Hetzner::new(&config.hetzner.token);
     let dns_api = Hetzner::new(config.hetzner.dns_token());
     Ok(Arc::new(State {
         db,
         key,
         docker,
-        hetzner,
         dns_api,
         internal_names: Default::default(),
         public_ips: RwLock::new(vec![]),
@@ -105,16 +120,13 @@ async fn build_state(config: Config) -> Result<Shared> {
     }))
 }
 
+/// The server's public addresses, from its own interface; no API involved.
 async fn refresh_public_ips(state: &Shared) -> Result<()> {
     if state.config.dev {
         *state.public_ips.write().await = vec!["127.0.0.1".into()];
         return Ok(());
     }
-    let server = state.hetzner.server(state.config.hetzner.server_id).await?;
-    let mut ips = Vec::new();
-    ips.extend(server.ipv4());
-    ips.extend(server.ipv6());
-    *state.public_ips.write().await = ips;
+    *state.public_ips.write().await = system::local_public_ips().await?;
     Ok(())
 }
 
@@ -123,17 +135,13 @@ async fn daemon(config: Config) -> Result<()> {
     db::fail_stale_jobs(&state.db).await?;
     tracing::info!("pocketcloud {} starting, interface at https://{}", env!("CARGO_PKG_VERSION"), state.config.interface_host);
 
-    // public ips: from the API, with the interface's own addresses as fallback so the API can never block us
+    // public ips: the interface's own global addresses; retried until the network is up
     if let Err(e) = refresh_public_ips(&state).await {
-        tracing::warn!("hetzner api: {e:#}; using the addresses of the interface");
-        match system::local_public_ips().await {
-            Ok(ips) => *state.public_ips.write().await = ips,
-            Err(e2) => tracing::error!("no public addresses known: {e2:#}"),
-        }
+        tracing::warn!("no public addresses yet: {e:#}");
         let st = state.clone();
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                tokio::time::sleep(Duration::from_secs(30)).await;
                 if refresh_public_ips(&st).await.is_ok() {
                     let _ = reconcile::apply(&st).await;
                     break;
@@ -142,6 +150,7 @@ async fn daemon(config: Config) -> Result<()> {
         });
     }
 
+    // the VPN resolver on the hub address
     if !state.config.dev {
         let st = state.clone();
         tokio::spawn(async move {
@@ -214,6 +223,10 @@ async fn daemon(config: Config) -> Result<()> {
                 s.aide_report = prev.aide_report;
                 s.aide_checked = prev.aide_checked;
                 s.audit_summary = prev.audit_summary;
+                s.latest_version = prev.latest_version;
+                if tick.is_multiple_of(1440) {
+                    s.latest_version = system::newer_release().await;
+                }
                 if tick.is_multiple_of(60) {
                     match system::pending_updates().await {
                         Ok(p) => {
@@ -230,6 +243,7 @@ async fn daemon(config: Config) -> Result<()> {
                 *st.host.write().await = s;
             }
             let _ = db::purge_sessions(&st.db).await;
+            backup::tick(&st).await;
             tick += 1;
             tokio::time::sleep(Duration::from_secs(60)).await;
         }

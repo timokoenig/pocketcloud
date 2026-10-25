@@ -23,6 +23,8 @@ pub enum Command {
     Upgrade(UpgradeArgs),
     /// Print the WireGuard config of the device created during setup
     Vpn(VpnArgs),
+    /// Switch nightly backups on or off, or derive the restic password for a manual restore
+    Backup(BackupArgs),
     /// Print the argon2 hash of a password (for config files)
     #[command(hide = true)]
     HashPassword { password: String },
@@ -71,6 +73,8 @@ pub enum ServerCommand {
     Apply,
     /// Reset the password of the interface user
     Passwd { username: String },
+    /// Run a backup now and wait for it (same job the interface starts)
+    Backup,
 }
 
 #[derive(Args)]
@@ -110,6 +114,24 @@ pub struct UpgradeArgs {
     /// Keep the Caddy that is installed
     #[arg(long)]
     pub skip_caddy: bool,
+}
+
+#[derive(Args)]
+pub struct BackupArgs {
+    /// Name of the installation
+    pub name: String,
+    #[command(subcommand)]
+    pub command: BackupCommand,
+}
+
+#[derive(Subcommand)]
+pub enum BackupCommand {
+    /// Configure Hetzner Object Storage and start nightly backups
+    Enable,
+    /// Stop backups (snapshots stay in the bucket)
+    Disable,
+    /// Print the restic password derived from the recovery phrase, for restores without pocketcloud
+    Password,
 }
 
 #[derive(Args)]

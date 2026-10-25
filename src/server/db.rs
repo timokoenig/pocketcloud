@@ -123,6 +123,20 @@ async fn migrate(db: &Db) -> Result<()> {
     if !cols.iter().any(|(_, n)| n == "waf") {
         sqlx::query("ALTER TABLE routes ADD COLUMN waf INTEGER NOT NULL DEFAULT 1").execute(db).await?;
     }
+    if !cols.iter().any(|(_, n)| n == "headers") {
+        sqlx::query("ALTER TABLE routes ADD COLUMN headers INTEGER NOT NULL DEFAULT 1").execute(db).await?;
+    }
+    let cols: Vec<(i64, String)> = sqlx::query_as("SELECT cid, name FROM pragma_table_info('apps')").fetch_all(db).await?;
+    if !cols.iter().any(|(_, n)| n == "egress") {
+        sqlx::query("ALTER TABLE apps ADD COLUMN egress TEXT NOT NULL DEFAULT 'all'").execute(db).await?;
+    }
+    if !cols.iter().any(|(_, n)| n == "backup") {
+        sqlx::query("ALTER TABLE apps ADD COLUMN backup INTEGER NOT NULL DEFAULT 1").execute(db).await?;
+    }
+    let cols: Vec<(i64, String)> = sqlx::query_as("SELECT cid, name FROM pragma_table_info('releases')").fetch_all(db).await?;
+    if !cols.iter().any(|(_, n)| n == "scan") {
+        sqlx::query("ALTER TABLE releases ADD COLUMN scan TEXT NOT NULL DEFAULT ''").execute(db).await?;
+    }
     Ok(())
 }
 
@@ -232,6 +246,33 @@ pub struct App {
     pub status_detail: String,
     pub created: String,
     pub updated: String,
+    /// internet access of the containers: `all`, `none`, or allowed TCP ports like `587,443`
+    pub egress: String,
+    /// volumes, files and database dumps of this app go into the nightly backup
+    pub backup: i64,
+}
+
+pub async fn set_app_backup(db: &Db, id: i64, on: bool) -> Result<()> {
+    sqlx::query("UPDATE apps SET backup = ?, updated = ? WHERE id = ?").bind(on as i64).bind(now()).bind(id).execute(db).await?;
+    Ok(())
+}
+
+pub async fn kv_get(db: &Db, key: &str) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar("SELECT value FROM kv WHERE key = ?").bind(key).fetch_optional(db).await?)
+}
+
+pub async fn kv_set(db: &Db, key: &str, value: &str) -> Result<()> {
+    sqlx::query("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+        .bind(key)
+        .bind(value)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_app_egress(db: &Db, id: i64, egress: &str) -> Result<()> {
+    sqlx::query("UPDATE apps SET egress = ?, updated = ? WHERE id = ?").bind(egress).bind(now()).bind(id).execute(db).await?;
+    Ok(())
 }
 
 pub async fn apps(db: &Db) -> Result<Vec<App>> {
@@ -302,6 +343,8 @@ pub struct Route {
     pub expose: String,
     /// web application firewall in front of this route (public routes only)
     pub waf: i64,
+    /// default security headers on responses (public routes only)
+    pub headers: i64,
 }
 
 pub async fn routes(db: &Db) -> Result<Vec<Route>> {
@@ -312,21 +355,28 @@ pub async fn routes_of(db: &Db, app_id: i64) -> Result<Vec<Route>> {
     Ok(sqlx::query_as("SELECT * FROM routes WHERE app_id = ? ORDER BY host").bind(app_id).fetch_all(db).await?)
 }
 
-pub async fn add_route(db: &Db, app_id: i64, host: &str, service: &str, port: i64, expose: &str, waf: bool) -> Result<()> {
-    sqlx::query("INSERT INTO routes (app_id, host, service, port, expose, waf) VALUES (?, ?, ?, ?, ?, ?)")
+pub async fn add_route(db: &Db, app_id: i64, host: &str, service: &str, port: i64, expose: &str, waf: bool, headers: bool) -> Result<()> {
+    sqlx::query("INSERT INTO routes (app_id, host, service, port, expose, waf, headers) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .bind(app_id)
         .bind(host)
         .bind(service)
         .bind(port)
         .bind(expose)
         .bind(waf as i64)
+        .bind(headers as i64)
         .execute(db)
         .await?;
     Ok(())
 }
 
-pub async fn set_route_waf(db: &Db, app_id: i64, id: i64, waf: bool) -> Result<()> {
-    sqlx::query("UPDATE routes SET waf = ? WHERE id = ? AND app_id = ?").bind(waf as i64).bind(id).bind(app_id).execute(db).await?;
+/// `what` is `waf` or `headers`.
+pub async fn set_route_flag(db: &Db, app_id: i64, id: i64, what: &str, on: bool) -> Result<()> {
+    let sql = match what {
+        "waf" => "UPDATE routes SET waf = ? WHERE id = ? AND app_id = ?",
+        "headers" => "UPDATE routes SET headers = ? WHERE id = ? AND app_id = ?",
+        _ => anyhow::bail!("unknown route flag"),
+    };
+    sqlx::query(sql).bind(on as i64).bind(id).bind(app_id).execute(db).await?;
     Ok(())
 }
 
@@ -381,10 +431,17 @@ pub struct Release {
     /// deployed | failed | rolled_back
     pub outcome: String,
     pub created: String,
+    /// JSON from the vulnerability scan, empty when not scanned
+    pub scan: String,
 }
 
 pub async fn releases_of(db: &Db, app_id: i64, limit: i64) -> Result<Vec<Release>> {
     Ok(sqlx::query_as("SELECT * FROM releases WHERE app_id = ? ORDER BY id DESC LIMIT ?").bind(app_id).bind(limit).fetch_all(db).await?)
+}
+
+pub async fn set_release_scan(db: &Db, id: i64, scan: &str) -> Result<()> {
+    sqlx::query("UPDATE releases SET scan = ? WHERE id = ?").bind(scan).bind(id).execute(db).await?;
+    Ok(())
 }
 
 pub async fn last_good_release(db: &Db, app_id: i64) -> Result<Option<Release>> {
@@ -394,13 +451,14 @@ pub async fn last_good_release(db: &Db, app_id: i64) -> Result<Option<Release>> 
         .await?)
 }
 
-pub async fn add_release(db: &Db, app_id: i64, compose_rendered: &str, images: &[String], outcome: &str) -> Result<i64> {
-    let r = sqlx::query("INSERT INTO releases (app_id, compose_rendered, images, outcome, created) VALUES (?, ?, ?, ?, ?)")
+pub async fn add_release(db: &Db, app_id: i64, compose_rendered: &str, images: &[String], outcome: &str, scan: &str) -> Result<i64> {
+    let r = sqlx::query("INSERT INTO releases (app_id, compose_rendered, images, outcome, created, scan) VALUES (?, ?, ?, ?, ?, ?)")
         .bind(app_id)
         .bind(compose_rendered)
         .bind(serde_json::to_string(images)?)
         .bind(outcome)
         .bind(now())
+        .bind(scan)
         .execute(db)
         .await?;
     Ok(r.last_insert_rowid())

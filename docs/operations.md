@@ -31,6 +31,40 @@ WireGuard and the Caddy configuration from its state, so nothing depends on what
 cloud-init (user, ssh key, bootstrap firewall) runs once, at first boot. Each installer run is noted in
 `/var/log/pocketcloud/installs.log`.
 
+## Backups
+
+Opt-in per installation: setup asks, `pocketcloud backup <name> enable` switches it on later, `disable` off.
+Without it there is no backup UI at all. Storage is Hetzner Object Storage (S3) through restic; the repository is
+encrypted with a password derived from the master key, so the recovery phrase plus the bucket credentials restore
+everything. Nightly at 03:30 server time; every snapshot is kept for 30 days and deleted after that, integrity check on
+Sundays.
+
+In the backup set: the pocketcloud database (consistent copy), the server config, and for every app with its
+*backup* switch on: the volumes, the `files` directory, and a `pg_dumpall` or `mysqldump` of every running
+postgres, mysql or mariadb service. Apps with their own backup scheme switch it off on their page. Never in the
+set: the master key.
+
+The server page shows the last run, snapshot count, size and last check, with a *Back up now* button; the
+dashboard warns after a failed run or two days without success. On the server, `sudo pocketcloud server backup`
+runs the same job from a shell and waits for it. Hetzner Object Storage occasionally answers a request with a
+spurious "Access Denied"; restic calls are retried three times for that.
+
+Restore by hand, from any machine with restic:
+
+```
+pocketcloud backup <name> password        # asks for the recovery phrase, prints RESTIC_* exports
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+restic snapshots
+restic restore latest --target /tmp/restore --include /var/lib/docker/volumes/<volume>
+```
+
+A restored volume goes back with the app stopped: copy the `_data` directory over the volume's, start the app.
+A database dump is replayed into the running database service. An automated restore (per app, and a whole
+server through setup) is the next step.
+
+Note: the server holds credentials that can delete snapshots, since it prunes them. Keep that in mind when
+choosing the bucket's project.
+
 ## Updates
 
 - Setup installs every pending package before the daemon starts and reboots once if the kernel changed.

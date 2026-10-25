@@ -2,7 +2,8 @@
 
 ## Before
 
-- A Hetzner Cloud project with an API token (read & write). If the DNS zones live in another project, a token for
+- A Hetzner Cloud project with an API token (read & write); it stays on your machine. If the DNS zones live in
+  another project (recommended: the server then only holds a token that cannot touch servers), a token for
   that one too.
 - The zone of every domain you want to use exists in Hetzner DNS (Cloud Console → DNS). Pocketcloud writes
   `domain` and `*.domain` records and the ACME challenge records; nothing else in the zone is touched.

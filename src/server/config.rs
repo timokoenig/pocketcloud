@@ -21,6 +21,9 @@ pub struct Config {
     pub hetzner: HetznerConfig,
     pub vpn: VpnConfig,
     pub acme: AcmeConfig,
+    /// Nightly restic backups; absent means off and no backup UI
+    #[serde(default)]
+    pub backup: Option<BackupConfig>,
     /// Seeded into the users table on first start, then ignored
     pub bootstrap_user: Option<BootstrapUser>,
     /// Developer mode: no nftables, wireguard, caddy, docker or acme calls, for running on a laptop
@@ -40,12 +43,16 @@ fn default_listen() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HetznerConfig {
-    /// Token of the project that holds the server
-    pub token: String,
-    /// Token of the project that holds the DNS zones; the server token when empty
+    /// Token of the project that holds the DNS zones. The only Hetzner credential the server holds: it needs it
+    /// for the certificate challenge and the public records, nothing else. The cloud token stays on the laptop.
     #[serde(default)]
     pub dns_token: String,
+    /// Older configs: the cloud token; only used when `dns_token` is empty. The installer removes it.
+    #[serde(default)]
+    pub token: String,
+    #[serde(default)]
     pub server_id: i64,
+    #[serde(default)]
     pub firewall_id: i64,
 }
 
@@ -81,6 +88,21 @@ pub struct InitialPeer {
 
 fn default_upstreams() -> Vec<String> {
     vec!["185.12.64.1:53".into(), "185.12.64.2:53".into()]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupConfig {
+    pub s3_endpoint: String,
+    pub bucket: String,
+    pub access_key: String,
+    pub secret_key: String,
+    /// local hour of the nightly run (minute 30)
+    #[serde(default = "default_backup_hour")]
+    pub hour: u8,
+}
+
+fn default_backup_hour() -> u8 {
+    3
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -83,7 +83,7 @@ pub async fn show(State(state): State<Shared>, user: User, Path(id): Path<i64>, 
     let routes: Vec<views::RouteView> = db::routes_of(&state.db, id)
         .await?
         .into_iter()
-        .map(|r| views::RouteView { id: r.id, host: r.host, service: r.service, port: r.port, expose: r.expose, waf: r.waf != 0 })
+        .map(|r| views::RouteView { id: r.id, host: r.host, service: r.service, port: r.port, expose: r.expose, waf: r.waf != 0, headers: r.headers != 0 })
         .collect();
     let secrets: Vec<views::SecretView> = db::secrets_of(&state.db, id)
         .await?
@@ -98,12 +98,18 @@ pub async fn show(State(state): State<Shared>, user: User, Path(id): Path<i64>, 
             outcome: r.outcome,
             created: views::short_time(&r.created),
             images: serde_json::from_str(&r.images).unwrap_or_default(),
+            scan: views::scan_summary(&r.scan).0,
+            scan_bad: views::scan_summary(&r.scan).1,
+            findings: views::scan_summary(&r.scan).2,
         })
         .collect();
     let jobs = db::jobs_of(&state.db, id, 10).await?;
     let services = compose::check(&app.compose).unwrap_or_default();
     let active_job = db::active_job_of(&state.db, id).await?.map(|j| j.id);
     let (hints, suggest, env, missing) = compose_views(&state, &app, &routes, &secrets);
+    let hardening: Vec<(String, String)> = compose::inspect(&app.compose)
+        .map(|i| i.services.into_iter().flat_map(|s| s.hints.into_iter().map(move |h| (s.name.clone(), h))).collect())
+        .unwrap_or_default();
     html(views::AppShow {
         base: views::Base::new(&app.name, &user.username, &state.config.name, &f),
         app: views::AppView::from(&app),
@@ -120,7 +126,23 @@ pub async fn show(State(state): State<Shared>, user: User, Path(id): Path<i64>, 
         suggest,
         env,
         missing,
+        hardening,
+        backup_enabled: state.config.backup.is_some(),
     })
+}
+
+#[derive(Deserialize)]
+pub struct OnOffForm {
+    value: String,
+}
+
+/// Include the app's volumes, files and database dumps in the nightly backup, or not.
+pub async fn set_backup(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<OnOffForm>) -> R {
+    let app = load_app(&state, id).await?;
+    let on = f.value == "on";
+    db::set_app_backup(&state.db, id, on).await?;
+    db::audit(&state.db, &user.username, "app.backup", &format!("{} {on}", app.name)).await?;
+    Ok(back(&format!("/apps/{id}"), Some(if on { "app included in the nightly backup" } else { "app excluded from backups" }), None))
 }
 
 /// Route hints, a suggested first route, the environment table and the unset placeholders, all from the compose file.
@@ -162,6 +184,43 @@ fn placeholder_name(v: &str) -> Option<&str> {
     let inner = v.strip_prefix("${")?.strip_suffix('}')?;
     let name = inner.split([':', '-', '?']).next()?;
     (!name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(name)
+}
+
+#[derive(Deserialize)]
+pub struct EgressForm {
+    mode: String,
+    #[serde(default)]
+    ports: String,
+}
+
+/// Internet access of the app's containers; applied to the firewall at once.
+pub async fn set_egress(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<EgressForm>) -> R {
+    let app = load_app(&state, id).await?;
+    let page = format!("/apps/{id}");
+    let egress = match f.mode.as_str() {
+        "all" => "all".to_string(),
+        "none" => "none".to_string(),
+        "ports" => {
+            let mut ports = Vec::new();
+            for p in f.ports.split([',', ' ', ';']).filter(|p| !p.is_empty()) {
+                match p.parse::<u16>() {
+                    Ok(n) if n > 0 => ports.push(n.to_string()),
+                    _ => return Ok(back(&page, None, Some(&format!("`{p}` is not a port")))),
+                }
+            }
+            if ports.is_empty() {
+                return Ok(back(&page, None, Some("list at least one TCP port, or choose none")));
+            }
+            ports.join(",")
+        }
+        _ => return Ok(back(&page, None, Some("mode must be all, none or ports"))),
+    };
+    db::set_app_egress(&state.db, id, &egress).await?;
+    db::audit(&state.db, &user.username, "app.egress", &format!("{} {egress}", app.name)).await?;
+    if app.desired == "running" {
+        crate::server::reconcile::apply(&state).await?;
+    }
+    Ok(back(&page, Some("internet access updated"), None))
 }
 
 #[derive(Deserialize)]
@@ -247,6 +306,27 @@ pub async fn deploy(State(state): State<Shared>, user: User, Path(id): Path<i64>
     }
 }
 
+/// Recreate the containers with the current compose file and secrets, images pinned to the last deployment.
+pub async fn apply(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
+    let app = load_app(&state, id).await?;
+    db::audit(&state.db, &user.username, "app.apply", &app.name).await?;
+    match run_job(&state, &app, "apply", false).await {
+        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
+        Err(e) => Ok(back(&format!("/apps/{id}"), None, Some(&e.to_string()))),
+    }
+}
+
+pub async fn scan(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
+    let app = load_app(&state, id).await?;
+    db::audit(&state.db, &user.username, "app.scan", &app.name).await?;
+    let redact = deploy::secret_values(&state, app.id).await?;
+    let app_id = app.id;
+    match jobs::spawn(&state, "scan", Some(app.id), redact, move |s, log| deploy::scan(s, app_id, log)).await {
+        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
+        Err(e) => Ok(back(&format!("/apps/{id}"), None, Some(&e.to_string()))),
+    }
+}
+
 pub async fn start(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
     let app = load_app(&state, id).await?;
     db::audit(&state.db, &user.username, "app.start", &app.name).await?;
@@ -293,8 +373,9 @@ pub struct RouteForm {
     service: String,
     port: i64,
     expose: String,
-    /// checkbox; absent when unchecked
+    /// checkboxes; absent when unchecked
     waf: Option<String>,
+    headers: Option<String>,
 }
 
 pub async fn add_route(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<RouteForm>) -> R {
@@ -322,11 +403,11 @@ pub async fn add_route(State(state): State<Shared>, user: User, Path(id): Path<i
     if !services.contains(&f.service) {
         return Ok(back(&page, None, Some("unknown service")));
     }
-    let waf = f.waf.is_some();
-    if let Err(e) = db::add_route(&state.db, id, &host, &f.service, f.port, &f.expose, waf).await {
+    let (waf, headers) = (f.waf.is_some(), f.headers.is_some());
+    if let Err(e) = db::add_route(&state.db, id, &host, &f.service, f.port, &f.expose, waf, headers).await {
         return Ok(back(&page, None, Some(&format!("route not added: {e}"))));
     }
-    db::audit(&state.db, &user.username, "route.add", &format!("{} {} -> {}:{} {} waf={waf}", app.name, host, f.service, f.port, f.expose)).await?;
+    db::audit(&state.db, &user.username, "route.add", &format!("{} {} -> {}:{} {} waf={waf} headers={headers}", app.name, host, f.service, f.port, f.expose)).await?;
     if app.desired == "running" {
         crate::server::reconcile::apply(&state).await?;
     }
@@ -334,17 +415,22 @@ pub async fn add_route(State(state): State<Shared>, user: User, Path(id): Path<i
 }
 
 #[derive(Deserialize)]
-pub struct WafForm {
-    waf: String,
+pub struct FlagForm {
+    /// `waf` or `headers`
+    what: String,
+    value: String,
 }
 
-pub async fn set_route_waf(State(state): State<Shared>, user: User, Path((id, rid)): Path<(i64, i64)>, Form(f): Form<WafForm>) -> R {
+/// Switch the WAF or the default security headers of one route.
+pub async fn set_route_flag(State(state): State<Shared>, user: User, Path((id, rid)): Path<(i64, i64)>, Form(f): Form<FlagForm>) -> R {
     let app = load_app(&state, id).await?;
-    let on = f.waf == "on";
-    db::set_route_waf(&state.db, id, rid, on).await?;
-    db::audit(&state.db, &user.username, "route.waf", &format!("{} route {rid} waf={on}", app.name)).await?;
+    let on = f.value == "on";
+    if let Err(e) = db::set_route_flag(&state.db, id, rid, &f.what, on).await {
+        return Ok(back(&format!("/apps/{id}"), None, Some(&e.to_string())));
+    }
+    db::audit(&state.db, &user.username, "route.flag", &format!("{} route {rid} {}={on}", app.name, f.what)).await?;
     crate::server::reconcile::apply(&state).await?;
-    Ok(back(&format!("/apps/{id}"), Some(if on { "WAF enabled for the route" } else { "WAF disabled for the route" }), None))
+    Ok(back(&format!("/apps/{id}"), Some(&format!("{} {} for the route", f.what, if on { "enabled" } else { "disabled" })), None))
 }
 
 pub async fn delete_route(State(state): State<Shared>, user: User, Path((id, rid)): Path<(i64, i64)>) -> R {

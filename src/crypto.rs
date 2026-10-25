@@ -59,6 +59,16 @@ impl MasterKey {
         Self::from_bytes(&entropy[..len])
     }
 
+    /// A password for another tool (restic), derived from the key: SHA-256 over key and purpose, hex.
+    pub fn derive(&self, purpose: &str) -> Zeroizing<String> {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(&*self.0);
+        h.update(b"pocketcloud/");
+        h.update(purpose.as_bytes());
+        Zeroizing::new(hex::encode(h.finalize()))
+    }
+
     pub fn seal(&self, plaintext: &[u8]) -> Vec<u8> {
         let cipher = XChaCha20Poly1305::new((&*self.0).into());
         let mut nonce = [0u8; 24];

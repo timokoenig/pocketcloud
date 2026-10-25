@@ -15,8 +15,30 @@ not inspected. A blocked request gets a 403 and shows up on the server page. The
 route and can be switched off per route for apps that trigger false positives. Internal routes and the interface
 are not behind it.
 
+Responses of public routes carry HSTS, `X-Content-Type-Options: nosniff`, a referrer policy and `X-Frame-Options:
+SAMEORIGIN` unless switched off for the route. Clients that trip the WAF ten times in ten minutes are banned at
+the firewall for an hour by fail2ban, as are ssh brute-force attempts. The public listener writes JSON access
+logs to the journal (visitor addresses included; the journal keeps at most 1 GB). A CAA record limits certificate
+issuance for each domain to Let's Encrypt.
+
 Inside the tunnel, scope `web` devices reach `10.8.0.1:443` and DNS; `full` devices also SSH and the app networks.
 Both are enforced in nftables on the server, not just in the client's allowed IPs.
+
+Apps reach the internet through NAT; per app that can be cut to nothing or to a list of TCP ports. Apps never
+reach each other or the host's services except through routes.
+
+## Hetzner tokens
+
+The server holds one Hetzner credential: the token of the project with the DNS zones, which the certificate
+challenge and the public records need. The cloud token that can create, delete or re-firewall servers stays on
+the laptop in `~/.config/pocketcloud/<name>/`. Putting the zones in a project of their own keeps the server's
+token away from the server itself.
+
+## Backups
+
+Off unless enabled. restic encrypts everything client-side with a password derived from the master key; the
+bucket operator sees only ciphertext. The master key is never part of a backup. The S3 credentials sit in the
+server config (root only) and can delete snapshots; a bucket in a project of its own limits the blast radius.
 
 ## Secrets
 

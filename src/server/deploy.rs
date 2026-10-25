@@ -79,6 +79,17 @@ async fn deploy_inner(state: &Shared, app: &db::App, log: &Log, pull: bool) -> R
     log.line(format!("services: {}", p.rendered.services.iter().map(|(n, ip)| format!("{n} ({ip})")).collect::<Vec<_>>().join(", "))).await;
     if pull {
         docker::compose(state, &app.name, &p.app_dir, &p.env_file, &["pull", "--quiet"], log).await.context("pull")?;
+    } else if let Some(last) = db::last_good_release(&state.db, app.id).await? {
+        // without a pull the images stay exactly what the last deployment ran, by digest
+        let digests: Vec<String> = serde_json::from_str(&last.images).unwrap_or_default();
+        match pin_images(&p.rendered.yaml, &digests) {
+            Ok((yaml, n)) if n > 0 => {
+                std::fs::write(p.app_dir.join("compose.yaml"), &yaml)?;
+                log.line(format!("{n} image(s) pinned to the digests of deployment #{}", last.id)).await;
+            }
+            Ok(_) => {}
+            Err(e) => log.line(format!("could not pin images: {e:#}")).await,
+        }
     }
     // the network must exist before the firewall can name its bridge; up creates it
     let up = docker::compose(
@@ -101,14 +112,114 @@ async fn deploy_inner(state: &Shared, app: &db::App, log: &Log, pull: bool) -> R
         Some(d) => docker::image_digests(d, &app.name).await,
         None => vec![],
     };
-    db::add_release(&state.db, app.id, &p.rendered.yaml, &images, "deployed").await?;
+    let scan = if pull { scan_images(state, &p.rendered.images, log).await } else { String::new() };
+    db::add_release(&state.db, app.id, &p.rendered.yaml, &images, "deployed", &scan).await?;
+    Ok(())
+}
+
+/// Rewrite `image:` of every service to the digest the last deployment recorded ("service: repo@sha256:..").
+fn pin_images(yaml: &str, digests: &[String]) -> Result<(String, usize)> {
+    let mut doc: serde_yaml_ng::Value = serde_yaml_ng::from_str(yaml)?;
+    let mut n = 0;
+    if let Some(services) = doc.get_mut("services").and_then(|s| s.as_mapping_mut()) {
+        for entry in digests {
+            let Some((service, digest)) = entry.split_once(": ") else { continue };
+            if !digest.contains("@sha256:") {
+                continue;
+            }
+            if let Some(svc) = services.get_mut(serde_yaml_ng::Value::String(service.to_string())).and_then(|s| s.as_mapping_mut()) {
+                svc.insert(serde_yaml_ng::Value::String("image".into()), serde_yaml_ng::Value::String(digest.to_string()));
+                n += 1;
+            }
+        }
+    }
+    Ok((serde_yaml_ng::to_string(&doc)?, n))
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+pub struct ImageScan {
+    pub image: String,
+    pub critical: usize,
+    pub high: usize,
+    /// up to ten critical findings: "CVE pkg installed -> fixed"
+    pub findings: Vec<String>,
+    pub error: String,
+}
+
+/// Trivy on each image, local daemon only. Never blocks a deploy; the result goes to the log and the release.
+pub async fn scan_images(state: &State, images: &[String], log: &Log) -> String {
+    if state.config.dev {
+        return String::new();
+    }
+    let cache = state.config.data_dir.join("trivy");
+    let mut out = Vec::new();
+    for image in images {
+        log.line(format!("$ trivy image {image}")).await;
+        let res = tokio::process::Command::new("trivy")
+            .args(["image", "--quiet", "--format", "json", "--scanners", "vuln", "--severity", "HIGH,CRITICAL", "--image-src", "docker", "--timeout", "10m"])
+            .arg("--cache-dir")
+            .arg(&cache)
+            .arg(image)
+            .env("TRIVY_CACHE_DIR", &cache)
+            .env("HOME", &state.config.data_dir)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await;
+        let mut scan = ImageScan { image: image.clone(), ..Default::default() };
+        match res {
+            Err(e) => scan.error = format!("trivy not available: {e}"),
+            Ok(o) if !o.status.success() => scan.error = String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("trivy failed").to_string(),
+            Ok(o) => {
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&o.stdout) {
+                    for r in v.get("Results").and_then(|r| r.as_array()).into_iter().flatten() {
+                        for vuln in r.get("Vulnerabilities").and_then(|x| x.as_array()).into_iter().flatten() {
+                            let sev = vuln.get("Severity").and_then(|s| s.as_str()).unwrap_or("");
+                            let s = |k: &str| vuln.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                            if sev == "CRITICAL" {
+                                scan.critical += 1;
+                                if scan.findings.len() < 10 {
+                                    let fixed = s("FixedVersion");
+                                    scan.findings.push(format!("{} {} {}{}", s("VulnerabilityID"), s("PkgName"), s("InstalledVersion"), if fixed.is_empty() { String::new() } else { format!(" -> {fixed}") }));
+                                }
+                            } else if sev == "HIGH" {
+                                scan.high += 1;
+                            }
+                        }
+                    }
+                } else {
+                    scan.error = "unreadable trivy output".into();
+                }
+            }
+        }
+        if scan.error.is_empty() {
+            log.line(format!("  {} critical, {} high", scan.critical, scan.high)).await;
+            for f in &scan.findings {
+                log.line(format!("  {f}")).await;
+            }
+        } else {
+            log.line(format!("  scan failed: {}", scan.error)).await;
+        }
+        out.push(scan);
+    }
+    serde_json::to_string(&out).unwrap_or_default()
+}
+
+/// Scan the images of the current compose file and attach the result to the latest deployment.
+pub async fn scan(state: Shared, app_id: i64, log: Log) -> Result<()> {
+    let app = db::app(&state.db, app_id).await?.ok_or_else(|| anyhow!("app not found"))?;
+    let env = state.config.run_dir().join("env").join(format!("{}.env", app.name));
+    let rendered = compose::render(&app.compose, &app.name, app.net_index as u32, &env.display().to_string())?;
+    let scan = scan_images(&state, &rendered.images, &log).await;
+    if let Some(last) = db::last_good_release(&state.db, app.id).await? {
+        db::set_release_scan(&state.db, last.id, &scan).await?;
+    }
     Ok(())
 }
 
 async fn rollback(state: &Shared, app: &db::App, log: &Log, reason: &str) -> Result<()> {
     let p = prepare(state, app, None).await.ok();
     if let Some(p) = &p {
-        db::add_release(&state.db, app.id, &p.rendered.yaml, &[], "failed").await?;
+        db::add_release(&state.db, app.id, &p.rendered.yaml, &[], "failed", "").await?;
     }
     let Some(last) = db::last_good_release(&state.db, app.id).await? else {
         db::set_app_status(&state.db, app.id, "failed", reason).await?;

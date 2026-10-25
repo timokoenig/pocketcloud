@@ -94,6 +94,11 @@ The installed Caddy is the stock package without the Coraza module; public route
 `pocketcloud upgrade <name>` installs the bundled build. For a local build: `scripts/build-caddy.sh` and
 `--caddy-binary dist/caddy-<arch>-unknown-linux-musl`.
 
+## An app cannot reach the internet
+
+Check *Internet access* on the app page. With `none` or a port list, anything else is dropped by the firewall;
+mail needs 587 or 465, webhooks 443. DNS is not affected.
+
 ## A deploy fails or rolls back
 
 The job page shows the compose output. Usual causes: the image cannot be pulled (add the registry under

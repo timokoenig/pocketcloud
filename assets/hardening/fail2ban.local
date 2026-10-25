@@ -7,3 +7,11 @@ maxretry = 3
 [sshd]
 enabled = true
 mode = aggressive
+# clients that keep tripping the WAF (Caddy logs every block) are banned at the firewall
+[pocketcloud-waf]
+enabled = true
+filter = pocketcloud-waf
+port = http,https
+maxretry = 10
+findtime = 10m
+bantime = 1h

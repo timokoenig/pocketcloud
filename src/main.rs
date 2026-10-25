@@ -1,3 +1,4 @@
+mod backup_cli;
 mod cli;
 mod cloudinit;
 mod crypto;
@@ -29,6 +30,7 @@ fn main() -> anyhow::Result<()> {
             cli::Command::Rescue(a) => rescue::run(a).await,
             cli::Command::Upgrade(a) => upgrade::run(a).await,
             cli::Command::Vpn(a) => setup::vpn(a).await,
+            cli::Command::Backup(a) => backup_cli::run(a).await,
             cli::Command::HashPassword { password } => {
                 println!("{}", crypto::hash_password(&password)?);
                 Ok(())

@@ -28,9 +28,11 @@ input, select, textarea { font: inherit; color: var(--fg); background: var(--car
 textarea { width: 100%; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2; }
 input.short { width: 110px; }
 input.wide { width: 100%; min-width: 220px; box-sizing: border-box; }
-/* masked like a password field, but not one: browsers then do not offer to save the value */
-input.secret { -webkit-text-security: disc; }
+/* a one-line textarea: password managers and browser autofill leave textareas alone */
+textarea.secret { resize: none; height: 2.3em; min-width: 220px; white-space: nowrap; overflow: hidden; vertical-align: middle; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 label.check { flex-direction: row; align-items: center; gap: 6px; }
+details.hints { margin: 8px 0 16px; } details.hints summary { cursor: pointer; color: var(--warn); }
+input[hidden] { display: none; }
 .tag.ok { color: var(--ok); border-color: var(--ok); } .tag.err { color: var(--bad); border-color: var(--bad); }
 label { display: inline-flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 label input, label select { color: var(--fg); }
@@ -42,6 +44,7 @@ button, .button { font: inherit; padding: 7px 14px; border-radius: 6px; border: 
 button:hover, .button:hover { border-color: var(--muted); text-decoration: none; }
 button.primary, .button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 button.danger { color: var(--bad); border-color: var(--bad); }
+button.toggle { font-size: 12px; padding: 1px 8px; border-radius: 10px; color: var(--muted); } button.toggle.on { color: var(--ok); border-color: var(--ok); }
 button.link { border: 0; background: none; padding: 0; color: var(--accent); } button.link.danger { color: var(--bad); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }

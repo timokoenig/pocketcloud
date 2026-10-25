@@ -6,8 +6,10 @@
     {% if let Some(j) = active_job %}
       <a class="button" href="/jobs/{{ j }}">job #{{ j }} running…</a>
     {% else %}
-      <form method="post" action="/apps/{{ app.id }}/deploy" class="inline"><button class="primary" title="pull images and start">Deploy</button></form>
+      <form method="post" action="/apps/{{ app.id }}/deploy" class="inline"><button class="primary" title="pull the images (tags are resolved again), then start">Deploy</button></form>
       {% if app.desired == "running" %}
+      <form method="post" action="/apps/{{ app.id }}/apply" class="inline"><button title="recreate the containers with the current file and secrets; images stay pinned to the last deployment">Apply</button></form>
+      <form method="post" action="/apps/{{ app.id }}/scan" class="inline"><button title="vulnerability scan of the images (trivy)">Scan</button></form>
       <form method="post" action="/apps/{{ app.id }}/stop" class="inline" data-confirm="Stop {{ app.name }}? Its containers are removed, volumes stay."><button>Stop</button></form>
       {% else %}
       <form method="post" action="/apps/{{ app.id }}/start" class="inline"><button title="start without pulling">Start</button></form>
@@ -18,6 +20,27 @@
 </div>
 {% if !app.status_detail.is_empty() %}<div class="flash warn">{{ app.status_detail }}</div>{% endif %}
 <p class="muted small">network {{ app.subnet }} · created {{ app.created }} · updated {{ app.updated }}</p>
+<form method="post" action="/apps/{{ app.id }}/egress" class="row" id="egress-form">
+  <label>Internet access of the containers
+    <span class="row">
+      <select name="mode" id="egress-mode">
+        <option value="all"{% if app.egress_mode == "all" %} selected{% endif %}>all</option>
+        <option value="none"{% if app.egress_mode == "none" %} selected{% endif %}>none</option>
+        <option value="ports"{% if app.egress_mode == "ports" %} selected{% endif %}>only TCP ports</option>
+      </select>
+      <input name="ports" id="egress-ports" placeholder="587, 443" value="{{ app.egress_ports }}" class="short"{% if app.egress_mode != "ports" %} hidden{% endif %}>
+      <button>Save</button>
+    </span>
+  </label>
+  <span class="muted small">Outgoing connections from the app network. DNS through Docker keeps working; other apps are never reachable. Incoming traffic only comes through routes.</span>
+</form>
+{% if backup_enabled %}
+<form method="post" action="/apps/{{ app.id }}/backup" class="row">
+  {% if app.backup %}<input type="hidden" name="value" value="off"><button class="toggle on" title="volumes, files and database dumps of this app are in the nightly backup; click to exclude it">backup on</button>
+  {% else %}<input type="hidden" name="value" value="on"><button class="toggle" title="this app is excluded from backups; click to include it">backup off</button>{% endif %}
+  <span class="muted small">Switch off for apps that run their own backups.</span>
+</form>
+{% endif %}
 
 <h2>Services</h2>
 {% if containers.is_empty() %}
@@ -38,16 +61,28 @@
 </table>
 {% endif %}
 
+{% if !hardening.is_empty() %}
+<details class="hints">
+  <summary>Hardening hints ({{ hardening.len() }})</summary>
+  <ul class="small">
+  {% for h in hardening %}<li><strong>{{ h.0 }}</strong>: {{ h.1 }}</li>{% endfor %}
+  </ul>
+</details>
+{% endif %}
+
 <h2>Routes</h2>
 <table>
-  <thead><tr><th>Host</th><th>Service</th><th>Port</th><th>Exposure</th><th>WAF</th><th></th></tr></thead>
+  <thead><tr><th>Host</th><th>Service</th><th>Port</th><th>Exposure</th><th>Protection</th><th></th></tr></thead>
   <tbody>
   {% for r in routes %}
   <tr>
     <td><a href="https://{{ r.host }}" target="_blank" rel="noopener">{{ r.host }}</a></td>
     <td>{{ r.service }}</td><td>{{ r.port }}</td>
     <td><span class="tag {{ r.expose }}">{{ r.expose }}</span></td>
-    <td>{% if r.expose == "public" %}<form method="post" action="/apps/{{ app.id }}/routes/{{ r.id }}/waf" class="inline">{% if r.waf %}<input type="hidden" name="waf" value="off"><span class="tag ok">on</span> <button class="link">disable</button>{% else %}<input type="hidden" name="waf" value="on"><span class="tag err">off</span> <button class="link">enable</button>{% endif %}</form>{% else %}<span class="muted small">n/a</span>{% endif %}</td>
+    <td class="small">{% if r.expose == "public" %}
+      <form method="post" action="/apps/{{ app.id }}/routes/{{ r.id }}/flag" class="inline"><input type="hidden" name="what" value="waf">{% if r.waf %}<input type="hidden" name="value" value="off"><button class="toggle on" title="WAF is on; click to switch it off">WAF on</button>{% else %}<input type="hidden" name="value" value="on"><button class="toggle" title="WAF is off; click to switch it on">WAF off</button>{% endif %}</form>
+      <form method="post" action="/apps/{{ app.id }}/routes/{{ r.id }}/flag" class="inline"><input type="hidden" name="what" value="headers">{% if r.headers %}<input type="hidden" name="value" value="off"><button class="toggle on" title="security headers are on; click to switch them off">headers on</button>{% else %}<input type="hidden" name="value" value="on"><button class="toggle" title="security headers are off; click to switch them on">headers off</button>{% endif %}</form>
+    {% else %}<span class="muted">n/a</span>{% endif %}</td>
     <td><form method="post" action="/apps/{{ app.id }}/routes/{{ r.id }}/delete" class="inline" data-confirm="Remove route {{ r.host }}?"><button class="link danger">remove</button></form></td>
   </tr>
   {% endfor %}
@@ -57,13 +92,13 @@
     <td><select name="service" id="route-service">{% for h in hints %}<option value="{{ h.name }}" data-port="{{ h.port }}" data-host="{{ h.host }}"{% if let Some(sg) = suggest %}{% if sg.name == h.name %} selected{% endif %}{% endif %}>{{ h.name }}</option>{% endfor %}</select></td>
     <td><input name="port" id="route-port" type="number" min="1" max="65535" value="{% if let Some(h) = suggest %}{{ h.port }}{% else %}80{% endif %}" required class="short"></td>
     <td><select name="expose"><option value="public">public</option><option value="internal">internal (VPN)</option></select></td>
-    <td><label class="check"><input type="checkbox" name="waf" value="on" checked> on</label></td>
+    <td class="small"><label class="check"><input type="checkbox" name="waf" value="on" checked> WAF</label> <label class="check"><input type="checkbox" name="headers" value="on" checked> headers</label></td>
     <td><button>Add</button></td>
     </form>
   </tr>
   </tbody>
 </table>
-<p class="muted small">Hosts can be a configured domain itself ({{ domains.join(", ") }}) or one label below it; the certificate covers both. The port is the container's own port, prefilled from <code>ports</code> or <code>expose</code> in the compose file. Internal hosts resolve only through the VPN. The WAF (Coraza with the OWASP Core Rule Set) inspects public routes; switch it off for a route that gets false positives.{% if !waf_available %} <strong>The installed Caddy has no WAF module; run <code>pocketcloud upgrade</code>.</strong>{% endif %}</p>
+<p class="muted small">Hosts can be a configured domain itself ({{ domains.join(", ") }}) or one label below it; the certificate covers both. The port is the container's own port, prefilled from <code>ports</code> or <code>expose</code> in the compose file. Internal hosts resolve only through the VPN. The WAF (Coraza with the OWASP Core Rule Set) inspects public routes; switch it off for a route that gets false positives. Headers adds HSTS, nosniff, a referrer policy and SAMEORIGIN framing to responses.{% if !waf_available %} <strong>The installed Caddy has no WAF module; run <code>pocketcloud upgrade</code>.</strong>{% endif %}</p>
 
 <h2>Secrets</h2>
 {% if !missing.is_empty() %}<div class="flash warn">Referenced in the compose file but not set: {% for m in missing %}<code>{{ m }}</code> {% endfor %}</div>{% endif %}
@@ -74,7 +109,7 @@
   <tr>
     <td><code>{{ s.key }}</code></td><td class="muted small">{{ s.updated }}</td>
     <form method="post" action="/apps/{{ app.id }}/secrets" autocomplete="off" id="secret-{{ s.key }}">
-    <td><input type="hidden" name="key" value="{{ s.key }}"><input name="value" class="secret" placeholder="new value" required autocomplete="off" spellcheck="false"></td>
+    <td><input type="hidden" name="key" value="{{ s.key }}"><textarea name="value" class="secret" rows="1" placeholder="new value" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></td>
     <td><button>Replace</button> <button class="link danger" form="secret-delete-{{ s.key }}">remove</button></td>
     </form>
     <form method="post" action="/apps/{{ app.id }}/secrets/delete" id="secret-delete-{{ s.key }}" data-confirm="Remove secret {{ s.key }}?"><input type="hidden" name="key" value="{{ s.key }}"></form>
@@ -82,15 +117,15 @@
   {% endfor %}
   <tr>
     <form method="post" action="/apps/{{ app.id }}/secrets" autocomplete="off">
-    <td><input name="key" placeholder="DATABASE_URL" pattern="[A-Za-z_][A-Za-z0-9_]*" required{% if let Some(m) = missing.first() %} value="{{ m }}"{% endif %}></td>
+    <td><input name="key" placeholder="DATABASE_URL" pattern="[A-Za-z_][A-Za-z0-9_]*" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore{% if let Some(m) = missing.first() %} value="{{ m }}"{% endif %}></td>
     <td></td>
-    <td><input name="value" class="secret" placeholder="value" required autocomplete="off" spellcheck="false"></td>
+    <td><textarea name="value" class="secret" rows="1" placeholder="value" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></td>
     <td><button>Save</button></td>
     </form>
   </tr>
   </tbody>
 </table>
-<p class="muted small">Secrets reach every container of the app as environment variables and fill <code>${NAME}</code> in the compose file. Values are never shown again; Replace sets a new one.</p>
+<p class="muted small">Secrets reach every container of the app as environment variables and fill <code>${NAME}</code> in the compose file. Values are visible while you type and never shown again; Replace sets a new one.</p>
 
 <h2>Environment</h2>
 {% if env.is_empty() %}<p class="muted">the compose file sets no environment variables</p>{% else %}
@@ -131,7 +166,7 @@
 <table class="compact">
   <tbody>
   {% for r in releases %}
-  <tr><td>#{{ r.id }}</td><td><span class="status {{ r.outcome }}">{{ r.outcome }}</span></td><td class="muted small">{{ r.created }}</td><td class="small">{% for i in r.images %}<div>{{ i }}</div>{% endfor %}</td></tr>
+  <tr><td>#{{ r.id }}</td><td><span class="status {{ r.outcome }}">{{ r.outcome }}</span></td><td class="muted small">{{ r.created }}</td><td class="small">{% for i in r.images %}<div>{{ i }}</div>{% endfor %}</td><td class="small">{% if !r.scan.is_empty() %}<span class="tag {% if r.scan_bad %}err{% else %}ok{% endif %}">{{ r.scan }}</span>{% if !r.findings.is_empty() %}<details><summary class="muted">critical</summary>{% for f in r.findings %}<div>{{ f }}</div>{% endfor %}</details>{% endif %}{% endif %}</td></tr>
   {% endfor %}
   </tbody>
 </table>

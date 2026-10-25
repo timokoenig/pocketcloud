@@ -196,6 +196,18 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
     let email: String = Input::with_theme(&theme()).with_prompt("E-mail for Let's Encrypt (expiry warnings, optional)").allow_empty(true).default(String::new()).interact_text()?;
     let staging = Confirm::with_theme(&theme()).with_prompt("Use the Let's Encrypt staging environment (untrusted certificates, for trying things out)?").default(false).interact()?;
 
+    step("Backups");
+    let backup = if Confirm::with_theme(&theme())
+        .with_prompt("Back up this server nightly to Hetzner Object Storage (restic, encrypted with the master key)?")
+        .default(false)
+        .interact()?
+    {
+        Some(crate::backup_cli::ask()?)
+    } else {
+        info("no backups; `pocketcloud backup <name> enable` switches them on later");
+        None
+    };
+
     step("Plan");
     let price = server_type.monthly_gross(&location).unwrap_or(0.0);
     println!("  server      {} in {location}, {IMAGE}, {price:.2} €/month", server_type.name);
@@ -204,6 +216,10 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
     println!("  interface   https://{interface_host} (VPN only)");
     println!("  dns         {} and *.{} → server", domains.join(", "), domains.join(", *."));
     println!("  ssh         user {ssh_user}, key only, via VPN after setup");
+    match &backup {
+        Some(b) => println!("  backups     nightly 03:30 to s3://{} (restic, kept 30 days)", b.bucket),
+        None => println!("  backups     none"),
+    }
     if !args.yes && !Confirm::with_theme(&theme()).with_prompt("Create this?").default(true).interact()? {
         bail!("aborted");
     }
@@ -255,8 +271,7 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
         name: &inst.name,
         domains: &domains,
         interface_host: &interface_host,
-        hetzner_token: &hetzner_token,
-        dns_token: if separate { &dns_token } else { "" },
+        dns_token: &dns_token,
         vpn_port,
         hub_private_key: &hub.private,
         device: &device,
@@ -267,6 +282,7 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
         staging,
         username: &username,
         password_hash: &crypto::hash_password(&password)?,
+        backup: backup.as_ref(),
     });
 
     // the client config needs the server address; written now with a placeholder and completed after creation
@@ -294,7 +310,6 @@ struct ServerConfigInput<'a> {
     name: &'a str,
     domains: &'a [String],
     interface_host: &'a str,
-    hetzner_token: &'a str,
     dns_token: &'a str,
     vpn_port: u16,
     hub_private_key: &'a str,
@@ -306,21 +321,21 @@ struct ServerConfigInput<'a> {
     staging: bool,
     username: &'a str,
     password_hash: &'a str,
+    backup: Option<&'a crate::backup_cli::BackupInput>,
 }
 
 fn render_server_config(c: &ServerConfigInput) -> String {
     let domains = c.domains.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>().join(", ");
+    let backup = c.backup.map(crate::backup_cli::render_section).unwrap_or_default();
     format!(
-        r#"# written by pocketcloud setup; server_id and firewall_id are filled in after creation
+        r#"# written by pocketcloud setup
 name = {name:?}
 domains = [{domains}]
 interface_host = {interface_host:?}
 
 [hetzner]
-token = {hetzner_token:?}
+# the only Hetzner credential on the server: zone access for the certificate challenge and the public records
 dns_token = {dns_token:?}
-server_id = 0
-firewall_id = 0
 
 [vpn]
 port = {vpn_port}
@@ -340,10 +355,9 @@ environment = {env:?}
 [bootstrap_user]
 username = {username:?}
 password_hash = {password_hash:?}
-"#,
+{backup}"#,
         name = c.name,
         interface_host = c.interface_host,
-        hetzner_token = c.hetzner_token,
         dns_token = c.dns_token,
         vpn_port = c.vpn_port,
         hub_private_key = c.hub_private_key,
@@ -368,8 +382,7 @@ mod tests {
             name: "demo",
             domains: &["example.com".into(), "staging.example.com".into()],
             interface_host: "pocketcloud.example.com",
-            hetzner_token: "tok\"en",
-            dns_token: "",
+            dns_token: "tok\"en",
             vpn_port: 51820,
             hub_private_key: "k=",
             device: "mac",
@@ -380,6 +393,7 @@ mod tests {
             staging: true,
             username: "timo",
             password_hash: "$argon2id$x",
+            backup: None,
         });
         let c: crate::server::config::Config = toml::from_str(&s).unwrap();
         assert_eq!(c.domains.len(), 2);
@@ -494,11 +508,7 @@ async fn install_server(inst: &Installation, secrets: &Secrets, key: &MasterKey,
     let stage = tempdir(inst, "stage")?;
     remote::fetch_server_binary(args.server_binary.as_deref(), target, &stage.join("pocketcloud")).await?;
     remote::fetch_caddy_binary(args.caddy_binary.as_deref(), target, &stage.join("caddy")).await?;
-    let config = secrets
-        .server_config
-        .replace("server_id = 0", &format!("server_id = {}", server.id))
-        .replace("firewall_id = 0", &format!("firewall_id = {}", inst.hetzner.firewall_id.unwrap_or(0)));
-    install::write_private(&stage.join("config.toml"), &config)?;
+    install::write_private(&stage.join("config.toml"), &secrets.server_config)?;
     install::write_private(&stage.join("master.key"), &format!("{}\n", *key.to_hex()))?;
     write_assets(&stage)?;
     info("uploading");
@@ -534,6 +544,7 @@ pub fn write_assets(stage: &Path) -> Result<()> {
     std::fs::write(stage.join("hardening/sshd.conf"), include_str!("../assets/hardening/sshd.conf"))?;
     std::fs::write(stage.join("hardening/sysctl.conf"), include_str!("../assets/hardening/sysctl.conf"))?;
     std::fs::write(stage.join("hardening/fail2ban.local"), include_str!("../assets/hardening/fail2ban.local"))?;
+    std::fs::write(stage.join("hardening/fail2ban-waf.conf"), include_str!("../assets/hardening/fail2ban-waf.conf"))?;
     std::fs::write(stage.join("hardening/apt-unattended.conf"), include_str!("../assets/hardening/apt-unattended.conf"))?;
     std::fs::write(stage.join("hardening/journald.conf"), include_str!("../assets/hardening/journald.conf"))?;
     Ok(())

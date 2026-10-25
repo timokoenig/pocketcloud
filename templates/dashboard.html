@@ -6,6 +6,7 @@
 </div>
 {% if !docker_ok %}<div class="flash err">Docker is not reachable. Deploys will fail; check the server page.</div>{% endif %}
 {% if let Some(c) = cert_problem %}<div class="flash err">Certificate problem: {{ c }}</div>{% endif %}
+{% if let Some(b) = backup_warning %}<div class="flash warn">{{ b }} <a href="/server">Server page</a></div>{% endif %}
 {% if host.reboot_required %}<div class="flash warn">The server needs a reboot for pending updates. <a href="/server">Server page</a></div>{% endif %}
 {% if apps.is_empty() %}
 <p class="muted">No apps yet. Create one from a compose file; images come from a registry, builds are not supported.</p>

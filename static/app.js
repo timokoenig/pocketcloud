@@ -8,6 +8,23 @@ document.addEventListener('submit', function (e) {
 var log = document.getElementById('log');
 if (log) { log.scrollTop = log.scrollHeight; }
 
+// Secret fields are one-line textareas (no autofill); Enter submits instead of adding a line.
+document.addEventListener('keydown', function (e) {
+  var t = e.target;
+  if (t.tagName === 'TEXTAREA' && t.classList.contains('secret') && e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (t.form && t.form.requestSubmit) { t.form.requestSubmit(); } else if (t.form) { t.form.submit(); }
+  }
+});
+
+// Egress form: the port list only matters for "only TCP ports".
+var egressMode = document.getElementById('egress-mode');
+if (egressMode) {
+  egressMode.addEventListener('change', function () {
+    document.getElementById('egress-ports').hidden = egressMode.value !== 'ports';
+  });
+}
+
 // Route form: the chosen service brings its container port and a host suggestion from the compose file.
 var routeService = document.getElementById('route-service');
 if (routeService) {

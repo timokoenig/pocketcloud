@@ -41,7 +41,40 @@ pub async fn dashboard(State(state): State<Shared>, user: User, Query(f): Query<
         host: state.host.read().await.clone(),
         docker_ok: docker::ping(&state).await,
         cert_problem,
+        backup_warning: backup_warning(&state).await,
     })
+}
+
+async fn backup_view(state: &Shared) -> views::BackupView {
+    let s = crate::server::backup::status(state).await;
+    views::BackupView {
+        enabled: s.enabled,
+        repo: s.repo,
+        time: format!("{:02}:30", s.hour),
+        last_ok: if s.last_ok.is_empty() { "never".into() } else { views::ago(&s.last_ok) },
+        last_error: s.last_error,
+        last_snapshot: s.last_snapshot,
+        snapshots: s.snapshots,
+        size: s.bytes.parse::<u64>().map(|b| format!("{:.1} GB", b as f64 / 1e9)).unwrap_or_default(),
+        last_check: if s.last_check.is_empty() { "not yet".into() } else { views::ago(&s.last_check) },
+    }
+}
+
+/// Dashboard notice: a failed last run, or no success for two days.
+async fn backup_warning(state: &Shared) -> Option<String> {
+    if state.config.backup.is_none() {
+        return None;
+    }
+    let s = crate::server::backup::status(state).await;
+    if !s.last_error.is_empty() {
+        return Some(format!("The last backup failed: {}", s.last_error));
+    }
+    if let Some(t) = db::parse_time(&s.last_ok) {
+        if chrono::Utc::now() - t > chrono::Duration::hours(48) {
+            return Some(format!("The last successful backup was {}.", views::ago(&s.last_ok)));
+        }
+    }
+    None
 }
 
 pub async fn job(State(state): State<Shared>, user: User, Path(id): Path<i64>, Query(f): Query<Flash>) -> R {
@@ -242,7 +275,6 @@ pub async fn server(State(state): State<Shared>, user: User, Query(f): Query<Fla
         base: views::Base::new("Server", &user.username, &state.config.name, &f),
         pending_checked: if host.pending_checked.is_empty() { "not yet".into() } else { views::ago(&host.pending_checked) },
         aide_checked: if host.aide_checked.is_empty() { "not yet".into() } else { views::ago(&host.aide_checked) },
-        host,
         certs,
         public_ips: state.public_ips.read().await.clone(),
         domains: state.config.domains.clone(),
@@ -251,6 +283,10 @@ pub async fn server(State(state): State<Shared>, user: User, Query(f): Query<Fla
         daemon_started: views::ago(&state.started.to_rfc3339()),
         waf_available: state.waf_available,
         waf_events: if state.config.dev { vec![] } else { system::waf_events(50).await },
+        jails: if state.config.dev { vec![] } else { system::fail2ban_status().await },
+        backup: backup_view(&state).await,
+        newer_release: host.latest_version.clone(),
+        host,
         uptime,
         mem_used_pct,
         disk_used_pct,
@@ -290,6 +326,36 @@ pub async fn upgrade(State(state): State<Shared>, user: User) -> R {
     })
     .await?;
     Ok(back(&format!("/jobs/{job}"), None, None))
+}
+
+pub async fn backup_now(State(state): State<Shared>, user: User) -> R {
+    if state.config.backup.is_none() {
+        return Ok(back("/server", None, Some("backups are not configured")));
+    }
+    db::audit(&state.db, &user.username, "server.backup", "").await?;
+    match crate::server::backup::spawn_job(&state).await {
+        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
+        Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UnbanForm {
+    jail: String,
+    ip: String,
+}
+
+pub async fn unban(State(state): State<Shared>, user: User, Form(f): Form<UnbanForm>) -> R {
+    let ok_jail = matches!(f.jail.as_str(), "sshd" | "pocketcloud-waf");
+    let ok_ip = f.ip.parse::<std::net::IpAddr>().is_ok();
+    if !ok_jail || !ok_ip {
+        return Ok(back("/server", None, Some("unknown jail or address")));
+    }
+    db::audit(&state.db, &user.username, "server.unban", &format!("{} {}", f.jail, f.ip)).await?;
+    match system::run("fail2ban-client", &["set", &f.jail, "unbanip", &f.ip]).await {
+        Ok(_) => Ok(back("/server", Some(&format!("{} unbanned", f.ip)), None)),
+        Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
+    }
 }
 
 #[derive(Deserialize)]

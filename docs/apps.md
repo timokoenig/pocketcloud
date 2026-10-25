@@ -47,6 +47,25 @@ The *Environment* table lists the `environment` entries of every service and edi
 rewrite the compose file through the YAML model, so comments in it are lost; use *Edit compose* for anything
 beyond values.
 
+## Internet access
+
+Each app's containers can reach the internet fully (default), not at all, or only on listed TCP ports (for
+example 587 for mail). The switch is on the app page and takes effect at once. DNS keeps working either way,
+because Docker's resolver answers from the host. Other apps are never reachable, whatever the setting.
+
+## Hardening hints
+
+The app page lists what a service could do better: a pinned image tag, `user`, `read_only`, `cap_drop: [ALL]`,
+a healthcheck. They are hints, not rules.
+
+## Vulnerability scans and pinned images
+
+Every deploy that pulls images scans them with Trivy (high and critical, from the local daemon) and records the
+result with the deployment: counts on the app page, the critical findings in the job log. Scans never block a
+deploy. *Scan* runs it again for the current images. *Apply* and a restart after a reboot recreate the containers
+with the images pinned to the digests of the last deployment, so a tag that was moved in the registry cannot
+slip in; only *Deploy* resolves tags again.
+
 ## Routes
 
 The route form prefills the container port from `ports` or `expose` in the compose file and suggests a host for

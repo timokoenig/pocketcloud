@@ -13,6 +13,7 @@ pub struct RouteSpec {
     pub upstream: String,
     pub public: bool,
     pub waf: bool,
+    pub headers: bool,
 }
 
 /// Coraza with the OWASP Core Rule Set, compiled into the Caddy build. Request bodies are inspected (up to the
@@ -81,11 +82,34 @@ fn waf_route(hosts: Vec<String>) -> Value {
     })
 }
 
+/// Default security headers, set on the proxied response (deferred) so the app cannot lose them by accident.
+fn headers_route(hosts: Vec<String>) -> Value {
+    json!({
+        "match": [{"host": hosts}],
+        "handle": [{
+            "handler": "headers",
+            "response": {
+                "deferred": true,
+                "set": {
+                    "Strict-Transport-Security": ["max-age=31536000; includeSubDomains"],
+                    "X-Content-Type-Options": ["nosniff"],
+                    "Referrer-Policy": ["strict-origin-when-cross-origin"],
+                    "X-Frame-Options": ["SAMEORIGIN"]
+                }
+            }
+        }]
+    })
+}
+
 pub fn render(s: &CaddySpec) -> Value {
     let mut public_routes: Vec<Value> = Vec::new();
     let waf_hosts: Vec<String> = s.routes.iter().filter(|r| r.public && r.waf).map(|r| r.host.clone()).collect();
     if s.waf_available && !waf_hosts.is_empty() {
         public_routes.push(waf_route(waf_hosts));
+    }
+    let header_hosts: Vec<String> = s.routes.iter().filter(|r| r.public && r.headers).map(|r| r.host.clone()).collect();
+    if !header_hosts.is_empty() {
+        public_routes.push(headers_route(header_hosts));
     }
     public_routes.extend(s.routes.iter().filter(|r| r.public).map(|r| proxy_route(&r.host, &r.upstream)));
     public_routes.extend(s.domains.iter().map(|d| fallback_route(d)));
@@ -94,13 +118,17 @@ pub fn render(s: &CaddySpec) -> Value {
     let certs: Vec<Value> = s.certificates.iter().map(|(c, k)| json!({"certificate": c, "key": k})).collect();
     json!({
         "admin": {"listen": "127.0.0.1:2019", "config": {"persist": true}},
-        "logging": {"logs": {"default": {"writer": {"output": "stderr"}, "level": "WARN"}}},
+        "logging": {"logs": {
+            "default": {"writer": {"output": "stderr"}, "level": "WARN", "exclude": ["http.log.access.public"]},
+            "access": {"writer": {"output": "stderr"}, "level": "INFO", "include": ["http.log.access.public"], "encoder": {"format": "json"}}
+        }},
         "apps": {
             "http": {
                 "servers": {
                     "public": {
                         "listen": listen(s.public_ips, 443),
                         "routes": public_routes,
+                        "logs": {"default_logger_name": "public"},
                         "automatic_https": {"disable": true},
                         "tls_connection_policies": [{}],
                         "strict_sni_host": true
@@ -160,8 +188,8 @@ mod tests {
     #[test]
     fn renders() {
         let routes = vec![
-            RouteSpec { host: "shop.example.com".into(), upstream: "172.30.1.10:80".into(), public: true, waf: true },
-            RouteSpec { host: "tools.example.com".into(), upstream: "172.30.2.10:3000".into(), public: false, waf: true },
+            RouteSpec { host: "shop.example.com".into(), upstream: "172.30.1.10:80".into(), public: true, waf: true, headers: true },
+            RouteSpec { host: "tools.example.com".into(), upstream: "172.30.2.10:3000".into(), public: false, waf: true, headers: true },
         ];
         let ips = vec!["1.2.3.4".to_string(), "2a01::1".to_string()];
         let certs = vec![("/c/fullchain.pem".to_string(), "/c/key.pem".to_string())];
@@ -179,13 +207,16 @@ mod tests {
         assert!(s.contains("[2a01::1]:443"));
         assert!(s.contains("10.8.0.1:443"));
         let public = v["apps"]["http"]["servers"]["public"]["routes"].as_array().unwrap();
-        assert_eq!(public.len(), 3);
+        assert_eq!(public.len(), 4);
         assert_eq!(public[0]["handle"][0]["handler"], "waf");
         assert_eq!(public[0]["match"][0]["host"][0], "shop.example.com");
         assert!(public[0].get("terminal").is_none());
-        assert_eq!(public[1]["handle"][0]["handler"], "reverse_proxy");
-        assert_eq!(public[2]["match"][0]["host"][0], "*.example.com");
-        assert_eq!(public[2]["handle"][0]["headers"]["Location"][0], "https://example.com/");
+        assert_eq!(public[1]["handle"][0]["handler"], "headers");
+        assert_eq!(public[1]["handle"][0]["response"]["deferred"], true);
+        assert_eq!(public[2]["handle"][0]["handler"], "reverse_proxy");
+        assert_eq!(public[3]["match"][0]["host"][0], "*.example.com");
+        assert_eq!(public[3]["handle"][0]["headers"]["Location"][0], "https://example.com/");
+        assert_eq!(v["apps"]["http"]["servers"]["public"]["logs"]["default_logger_name"], "public");
         assert_eq!(v["apps"]["http"]["servers"]["internal"]["routes"].as_array().unwrap().len(), 2);
     }
 }

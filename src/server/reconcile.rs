@@ -34,6 +34,7 @@ pub async fn apply(state: &Shared) -> Result<()> {
                     upstream: format!("{ip}:{}", route.port),
                     public: route.expose == "public",
                     waf: route.waf != 0,
+                    headers: route.headers != 0,
                 });
             }
         }
@@ -56,7 +57,7 @@ pub async fn apply(state: &Shared) -> Result<()> {
     }
 
     // firewall
-    let bridges: Vec<String> = apps.iter().filter(|a| a.desired == "running").map(|a| firewall::bridge_name(&a.name)).collect();
+    let bridges: Vec<(String, String)> = apps.iter().filter(|a| a.desired == "running").map(|a| (firewall::bridge_name(&a.name), a.egress.clone())).collect();
     let wan = system::wan_interface().await?;
     let ruleset = firewall::render(&firewall::FirewallSpec { wan: &wan, vpn_port: state.config.vpn.port, bridges: &bridges });
     system::apply_nftables(&ruleset).await.context("apply nftables")?;
@@ -97,6 +98,12 @@ pub async fn ensure_dns_records(state: &Shared) -> Result<()> {
             if !v6.is_empty() {
                 state.dns_api.rrset_set(&zone.name, &rel, "AAAA", 300, &v6).await?;
             }
+        }
+        // CAA: only Let's Encrypt may issue for the domain; left alone when one exists already
+        let rel = crate::hetzner::relative_name(d, &zone.name);
+        if state.dns_api.rrset(&zone.name, &rel, "CAA").await?.is_none() {
+            state.dns_api.rrset_set(&zone.name, &rel, "CAA", 3600, &["0 issue \"letsencrypt.org\"".to_string()]).await?;
+            tracing::info!("dns: CAA record for {d} limits issuance to Let's Encrypt");
         }
         tracing::info!("dns: {d} and *.{d} -> {}", ips.join(", "));
     }
