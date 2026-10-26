@@ -21,7 +21,8 @@ Pick the binary that matches the server type: `aarch64` for the Arm types (CAX),
 
 The wizard, in order:
 
-Setup writes the public DNS records from your laptop (the domain and its wildcard, CAA, and the delegation of
+The cloud firewall lets in 80, 443, the WireGuard port, 53 for the challenge nameserver, and ICMP; ssh only
+while setup or rescue opens it for your address. Setup writes the public DNS records from your laptop (the domain and its wildcard, CAA, and the delegation of
 `_acme-challenge` to the server, which answers the certificate challenge itself); after a rebuild `pocketcloud
 dns <name>` re-points them. Setup only does what needs your laptop: Hetzner, the server, domains, the first VPN device, the login and the
 recovery phrase. Backups, alerts, Falco and apps are configured in the interface afterwards.

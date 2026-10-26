@@ -48,19 +48,37 @@ pub async fn run(args: ServerArgs) -> Result<()> {
             wait_for_job(&state, id).await
         }
         ServerCommand::Renew => {
-            let state = build_state(config).await?;
-            let id = jobs::spawn(&state, "certificates", None, vec![], |s, log| async move {
-                for d in &s.config.domains {
-                    let _ = std::fs::remove_file(s.config.certs_dir().join(d).join("fullchain.pem"));
-                    log.line(format!("renewing {d}")).await;
+            // issued by the daemon (it runs the challenge nameserver); this only asks and waits
+            let db = db::open(&config.db_path()).await?;
+            let requested_at = db::now();
+            let before: Vec<Option<std::time::SystemTime>> = config.domains.iter().map(|d| std::fs::metadata(config.certs_dir().join(d).join("fullchain.pem")).and_then(|m| m.modified()).ok()).collect();
+            db::kv_set(&db, "acme.renew_requested", "1").await?;
+            println!("renewal requested; the daemon issues within a minute");
+            for _ in 0..90 {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                let mut done = true;
+                for (d, old) in config.domains.iter().zip(&before) {
+                    let now = std::fs::metadata(config.certs_dir().join(d).join("fullchain.pem")).and_then(|m| m.modified()).ok();
+                    if now.is_none() || now == *old {
+                        done = false;
+                    }
                 }
-                if reconcile::ensure_certificates(&s).await? {
-                    reconcile::apply(&s).await?;
+                let errors: Vec<db::Certificate> = db::certificates(&db).await?.into_iter().filter(|c| !c.last_error.is_empty() && c.updated > requested_at).collect();
+                if !errors.is_empty() {
+                    for c in errors {
+                        println!("{}: {}", c.domain, c.last_error);
+                    }
+                    std::process::exit(1);
                 }
-                Ok(())
-            })
-            .await?;
-            wait_for_job(&state, id).await
+                if done {
+                    for d in &config.domains {
+                        let c = db::certificates(&db).await?.into_iter().find(|c| &c.domain == d);
+                        println!("{d}: valid until {}", c.and_then(|c| c.not_after).unwrap_or_default());
+                    }
+                    return Ok(());
+                }
+            }
+            anyhow::bail!("no new certificate after 7 minutes; see journalctl -u pocketcloud")
         }
         ServerCommand::NotifyTest => {
             let state = build_state(config).await?;
@@ -126,6 +144,7 @@ async fn build_state(config: Config) -> Result<Shared> {
         .with_context(|| format!("read master key {}", config.master_key_file.display()))?;
     let key = MasterKey::from_hex(&key_hex)?;
     let db = db::open(&config.db_path()).await?;
+    let acme_txt = dns::AcmeTxt::new(db.clone());
     if db::user_count(&db).await? == 0 {
         if let Some(u) = &config.bootstrap_user {
             db::create_user(&db, &u.username, &u.password_hash).await?;
@@ -145,7 +164,7 @@ async fn build_state(config: Config) -> Result<Shared> {
         db,
         key,
         docker,
-        acme_txt: dns::AcmeTxt::default(),
+        acme_txt,
         internal_names: Default::default(),
         public_ips: RwLock::new(public_ips),
         reconcile_lock: Mutex::new(()),
@@ -270,17 +289,30 @@ async fn daemon(config: Config) -> Result<()> {
     let st = state.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(3)).await;
+        let mut n = 0u64;
         loop {
-            match reconcile::ensure_certificates(&st).await {
-                Ok(true) => {
-                    if let Err(e) = reconcile::apply(&st).await {
-                        tracing::error!("reconcile after certificates: {e:#}");
-                    }
+            // `pocketcloud server renew` and the interface set this flag; issuing happens here, in the daemon,
+            // next to the nameserver that serves the challenge
+            let requested = db::kv_get(&st.db, "acme.renew_requested").await.ok().flatten().as_deref() == Some("1");
+            if requested {
+                let _ = db::kv_set(&st.db, "acme.renew_requested", "").await;
+                for d in &st.config.domains {
+                    let _ = std::fs::remove_file(st.config.certs_dir().join(d).join("fullchain.pem"));
                 }
-                Ok(false) => {}
-                Err(e) => tracing::error!("certificates: {e:#}"),
             }
-            tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+            if requested || n % 360 == 0 {
+                match reconcile::ensure_certificates(&st).await {
+                    Ok(true) => {
+                        if let Err(e) = reconcile::apply(&st).await {
+                            tracing::error!("reconcile after certificates: {e:#}");
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(e) => tracing::error!("certificates: {e:#}"),
+                }
+            }
+            n += 1;
+            tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
 

@@ -126,6 +126,9 @@ choosing the bucket's project.
 
 ## DNS
 
+Certificates renew inside the daemon, which also runs the challenge nameserver; *Renew now* on the server page
+and `sudo pocketcloud server renew` only ask it to.
+
 The real zone is only ever written from your laptop: by setup, and by `pocketcloud dns <name>` after a rebuild
 changed the address. The server answers `_acme-challenge.<domain>` itself for certificate renewals and holds no
 DNS token.

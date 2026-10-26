@@ -393,8 +393,8 @@ mod tests {
 
     #[test]
     fn rules() {
-        assert_eq!(firewall_rules(51820, None).len(), 4);
-        assert_eq!(firewall_rules(51820, Some("1.2.3.4")).len(), 5);
+        assert_eq!(firewall_rules(51820, None).len(), 6);
+        assert_eq!(firewall_rules(51820, Some("1.2.3.4")).len(), 7);
     }
 }
 
@@ -404,6 +404,8 @@ pub fn firewall_rules(vpn_port: u16, ssh_from: Option<&str>) -> Vec<FirewallRule
         FirewallRule::inbound("tcp", Some("80"), &any, "http"),
         FirewallRule::inbound("tcp", Some("443"), &any, "https"),
         FirewallRule::inbound("udp", Some(&vpn_port.to_string()), &any, "wireguard"),
+        FirewallRule::inbound("udp", Some("53"), &any, "acme challenge nameserver"),
+        FirewallRule::inbound("tcp", Some("53"), &any, "acme challenge nameserver"),
         FirewallRule::inbound("icmp", None, &any, "ping"),
     ];
     if let Some(ip) = ssh_from {

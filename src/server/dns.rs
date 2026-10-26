@@ -117,19 +117,26 @@ pub async fn query_txt(server: SocketAddr, name: &str) -> Result<Vec<String>> {
 // so certificates need no DNS token anywhere. It answers exactly those names and refuses everything else.
 // ---------------------------------------------------------------------------------------------------------------
 
-/// Current challenge values per domain, set by the certificate code while an order is open.
-#[derive(Clone, Default)]
-pub struct AcmeTxt(Arc<RwLock<std::collections::HashMap<String, Vec<String>>>>);
+/// Current challenge values per domain, set by the certificate code while an order is open. Kept in the
+/// database so the nameserver in the daemon serves what another process (the shell renew) put there.
+#[derive(Clone)]
+pub struct AcmeTxt(super::db::Db);
 
 impl AcmeTxt {
+    pub fn new(db: super::db::Db) -> Self {
+        AcmeTxt(db)
+    }
+    fn key(domain: &str) -> String {
+        format!("acme.txt.{}", domain.to_ascii_lowercase())
+    }
     pub async fn set(&self, domain: &str, values: Vec<String>) {
-        self.0.write().await.insert(domain.to_ascii_lowercase(), values);
+        let _ = super::db::kv_set(&self.0, &Self::key(domain), &serde_json::to_string(&values).unwrap_or_default()).await;
     }
     pub async fn clear(&self, domain: &str) {
-        self.0.write().await.remove(&domain.to_ascii_lowercase());
+        let _ = super::db::kv_set(&self.0, &Self::key(domain), "").await;
     }
     async fn get(&self, domain: &str) -> Vec<String> {
-        self.0.read().await.get(domain).cloned().unwrap_or_default()
+        super::db::kv_get(&self.0, &Self::key(domain)).await.ok().flatten().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
     }
 }
 
@@ -272,7 +279,9 @@ mod public_tests {
 
     #[tokio::test]
     async fn answers_only_the_delegated_names() {
-        let txt = AcmeTxt::default();
+        let path = std::env::temp_dir().join(format!("pocketcloud-dns-test-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let txt = AcmeTxt::new(crate::server::db::open(&path).await.unwrap());
         txt.set("example.com", vec!["abc".into(), "def".into()]).await;
         let zone = PublicZone { domains: vec!["example.com".into()], ips: vec!["1.2.3.4".parse().unwrap(), "2a01::1".parse().unwrap()], txt };
         let r = ask(&zone, "_acme-challenge.example.com.", RecordType::TXT).await;
