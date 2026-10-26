@@ -77,6 +77,8 @@ pub enum ServerCommand {
     Backup,
     /// Restore an app's data from a snapshot ("latest" or an id) and wait for it
     Restore { app: String, snapshot: String },
+    /// Send a test notification through the configured channels
+    NotifyTest,
 }
 
 #[derive(Args)]

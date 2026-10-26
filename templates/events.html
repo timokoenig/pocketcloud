@@ -1,0 +1,23 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="row between">
+  <h1>Events</h1>
+  <a class="button" href="/alerts">Alerts</a>
+</div>
+<form method="get" action="/events" class="row">
+  <select name="kind"><option value="">all kinds</option>{% for k in kinds %}<option value="{{ k.0 }}"{% if k.0 == kind %} selected{% endif %}>{{ k.0 }} ({{ k.1 }})</option>{% endfor %}</select>
+  <input name="q" placeholder="search" value="{{ q }}">
+  <button>Filter</button>
+</form>
+{% if events.is_empty() %}<p class="muted">no events{% if kind.is_empty() && q.is_empty() %} yet: ssh logins, bans, sudo, OOM kills, kernel errors, audit writes, Falco, WAF blocks, 5xx bursts, container deaths and deploys will appear here{% endif %}</p>{% else %}
+<table class="compact">
+  <thead><tr><th>Time</th><th>Kind</th><th>Source</th><th>What</th></tr></thead>
+  <tbody>
+  {% for e in events %}
+  <tr><td class="muted small">{{ e.ts }}</td><td><code>{{ e.kind }}</code></td><td class="muted small">{{ e.source }}</td><td class="small">{{ e.summary }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<p class="muted small">Events are kept for 14 days, host metrics for 48 hours.</p>
+{% endblock %}

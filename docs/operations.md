@@ -20,6 +20,29 @@ ssh -i ~/.config/pocketcloud/<name>/id_ed25519 admin@10.8.0.1
 with the tunnel active. `pocketcloud rescue <name> ssh` does the same and falls back to the public address when
 public SSH has been opened with `open-ssh`.
 
+## Monitoring and alerts
+
+The daemon watches the server itself; nothing else runs for it. Collectors: facts from the journal (ssh logins
+and failures, fail2ban bans, sudo, OOM kills, kernel errors, failed units, Caddy's WAF blocks and 5xx answers),
+auditd's syscall records with our keys, Falco's events, Docker events (containers dying, out of memory,
+unhealthy), and a one-minute sample of cpu, memory, swap, disk, inodes, pressure and clock sync. Events are
+kept 14 days, metrics 48 hours; both are on the *Events* and *Alerts* pages.
+
+Fixed checks run every minute and open alerts with a hold time so a blip is not a page: capacity thresholds,
+services and the Docker API, reboot pending, backups, certificates, failed deploys, AIDE findings, ssh brute
+force, ban waves, OOM kills, kernel errors, failed units, sensitive file changes, Falco by priority, WAF spikes,
+5xx bursts, containers dying, restart loops. Thresholds are editable on the *Alerts* page. Info-level alerts
+(a newer release, a reboot happened) show but do not notify.
+
+Notifications: `[notify.email]` (SMTP) and `[notify.webhook]` in the server config; setup asks for the mail
+account. Opened and resolved alerts are collected for a minute and sent as one message with the worst thing in
+the subject. `heartbeat_url` is pinged every five minutes while the daemon runs, for a dead man's switch service
+(healthchecks.io style) that tells you when the server itself is gone, the one thing it cannot report.
+*Send test notification* on the Alerts page and `sudo pocketcloud server notify-test` prove the channels.
+
+Falco (`[monitor] falco = true`, the default) is the Falco package with the eBPF probe, writing JSON events to
+`/var/log/infra/falco.jsonl`; the installer adds or removes it on the next upgrade. It costs about 150 MB.
+
 ## What an upgrade applies
 
 `pocketcloud upgrade <name>` uploads the new daemon, the Caddy build and every file under `assets/`, then runs the

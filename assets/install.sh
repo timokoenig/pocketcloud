@@ -57,6 +57,40 @@ if ! command -v trivy >/dev/null; then
   apt-get install -y -qq trivy >/dev/null
 fi
 
+# Falco runtime detection, when [monitor] falco = true (the default)
+mkdir -p /var/log/infra
+FALCO=true
+grep -A3 '^\[monitor\]' /etc/pocketcloud/config.toml 2>/dev/null | grep -q '^falco = false' && FALCO=false
+[[ -f "$STAGE/config.toml" ]] && grep -A3 '^\[monitor\]' "$STAGE/config.toml" | grep -q '^falco = false' && FALCO=false
+if [[ "$FALCO" == true ]]; then
+  if ! command -v falco >/dev/null; then
+    log "falco"
+    curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /etc/apt/keyrings/falco.gpg --yes
+    echo "deb [signed-by=/etc/apt/keyrings/falco.gpg] https://download.falco.org/packages/deb stable main" > /etc/apt/sources.list.d/falcosecurity.list
+    apt-get update -qq
+    FALCO_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf apt-get install -y -qq falco >/dev/null
+  fi
+  mkdir -p /etc/falco/config.d
+  cat > /etc/falco/config.d/pocketcloud.yaml <<'YAML'
+# written by pocketcloud: one JSON line per event into a file the daemon follows
+json_output: true
+json_include_output_property: true
+log_syslog: false
+stdout_output:
+  enabled: false
+syslog_output:
+  enabled: false
+file_output:
+  enabled: true
+  keep_alive: false
+  filename: /var/log/infra/falco.jsonl
+YAML
+  systemctl disable --now falco-bpf falco-kmod >/dev/null 2>&1 || true
+  systemctl enable --now falco-modern-bpf >/dev/null 2>&1 || systemctl restart falco-modern-bpf || true
+else
+  systemctl disable --now falco-modern-bpf >/dev/null 2>&1 || true
+fi
+
 # Caddy with the Coraza WAF: the packaged binary stays as fallback (official custom-build procedure)
 if [[ -f "$STAGE/caddy" ]]; then
   log "caddy with coraza"
@@ -155,8 +189,9 @@ log "audit, aide, fail2ban"
 augenrules --load >/dev/null 2>&1 || true
 systemctl enable --now auditd fail2ban nftables >/dev/null 2>&1 || true
 systemctl restart fail2ban || true
-# first aide database in the background; the daily timer checks against it
-if [[ ! -f /var/lib/aide/aide.db ]] && ! systemctl is-active --quiet pocketcloud-aide-init; then
+# aide database in the background: the first one, and a fresh baseline after every installer run so the
+# files it just changed do not show up as findings; the daily timer checks against it
+if ! systemctl is-active --quiet pocketcloud-aide-init; then
   systemd-run --quiet --unit pocketcloud-aide-init -p Nice=19 \
     bash -c 'aide --init -c /etc/aide/aide.conf >/var/log/pocketcloud/aide-init.log 2>&1; mv -f /var/lib/aide/aide.db.new /var/lib/aide/aide.db' || true
 fi

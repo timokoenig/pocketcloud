@@ -136,6 +136,22 @@ impl Ssh {
     }
 }
 
+/// The address to reach the server on: the VPN hub when the tunnel is up, else the public address when
+/// rescue opened ssh. Uses real ssh logins, not bare TCP probes: an unauthenticated connect is logged by sshd
+/// as a pre-auth close and counted by fail2ban's aggressive mode.
+pub async fn pick_host(inst: &crate::install::Installation) -> Result<String> {
+    let hub = crate::wireguard::HUB_IP.to_string();
+    if Ssh::for_installation(inst, &hub)?.reachable().await {
+        return Ok(hub);
+    }
+    if let Some(ip) = inst.server.ipv4.clone() {
+        if Ssh::for_installation(inst, &ip)?.reachable().await {
+            return Ok(ip);
+        }
+    }
+    bail!("server not reachable; activate the VPN or run: pocketcloud rescue {} open-ssh", inst.name)
+}
+
 pub async fn tcp_open(addr: &str, timeout_secs: u64) -> bool {
     tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), tokio::net::TcpStream::connect(addr)).await.map(|r| r.is_ok()).unwrap_or(false)
 }

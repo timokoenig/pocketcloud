@@ -34,6 +34,13 @@ challenge and the public records need. The cloud token that can create, delete o
 the laptop in `~/.config/pocketcloud/<name>/`. Putting the zones in a project of their own keeps the server's
 token away from the server itself.
 
+## Detection
+
+auditd records changes to identity, sudoers, sshd, ssh keys, firewall, WireGuard, cron, systemd, Docker, Caddy
+and Pocketcloud files; Falco watches syscalls for shells in containers, sensitive file reads, unexpected network
+activity and privilege escalation; the daemon turns both, plus the journal and Docker events, into alerts and
+mails them. See operations.md, Monitoring and alerts.
+
 ## Backups
 
 Off unless enabled. restic encrypts everything client-side with a password derived from the master key; the

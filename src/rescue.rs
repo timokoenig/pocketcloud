@@ -31,9 +31,11 @@ pub async fn run(args: RescueArgs) -> Result<()> {
             let ssh_rule = fw.rules.iter().find(|r| r.port.as_deref() == Some("22"));
             println!("  firewall  {} rules, public ssh {}", fw.rules.len(), match ssh_rule { Some(r) => format!("open for {}", r.source_ips.join(", ")), None => "closed".into() });
             println!("{}", style("reachability").bold());
-            let (a1, a2, a3, a4) = (format!("{ip}:443"), format!("{ip}:22"), format!("{HUB_IP}:443"), format!("{HUB_IP}:22"));
-            let (https, ssh_pub, vpn_https, vpn_ssh) =
-                tokio::join!(remote::tcp_open(&a1, 4), remote::tcp_open(&a2, 4), remote::tcp_open(&a3, 3), remote::tcp_open(&a4, 3));
+            // ssh is checked with a real login: bare connects would count as failures for fail2ban
+            let (a1, a3) = (format!("{ip}:443"), format!("{HUB_IP}:443"));
+            let ssh_pub_c = Ssh::for_installation(&inst, &ip)?;
+            let ssh_vpn_c = Ssh::for_installation(&inst, &HUB_IP.to_string())?;
+            let (https, ssh_pub, vpn_https, vpn_ssh) = tokio::join!(remote::tcp_open(&a1, 4), ssh_pub_c.reachable(), remote::tcp_open(&a3, 3), ssh_vpn_c.reachable());
             let mark = |b: bool| if b { style("open").green() } else { style("closed").red() };
             println!("  public    443 {}   22 {}", mark(https), mark(ssh_pub));
             println!("  vpn       443 {}   22 {}   (needs the tunnel active on this device)", mark(vpn_https), mark(vpn_ssh));
@@ -81,12 +83,6 @@ pub async fn run(args: RescueArgs) -> Result<()> {
     Ok(())
 }
 
-async fn pick_host(inst: &Installation, public_ip: &str) -> Result<String> {
-    if remote::tcp_open(&format!("{HUB_IP}:22"), 3).await {
-        return Ok(HUB_IP.to_string());
-    }
-    if remote::tcp_open(&format!("{public_ip}:22"), 4).await {
-        return Ok(public_ip.to_string());
-    }
-    bail!("neither the VPN address nor public ssh is reachable; activate the tunnel or run: pocketcloud rescue {} open-ssh", inst.name)
+async fn pick_host(inst: &Installation, _public_ip: &str) -> Result<String> {
+    remote::pick_host(inst).await
 }

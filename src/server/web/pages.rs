@@ -42,6 +42,110 @@ pub async fn dashboard(State(state): State<Shared>, user: User, Query(f): Query<
         docker_ok: docker::ping(&state).await,
         cert_problem,
         backup_warning: backup_warning(&state).await,
+        open_alerts: {
+            let a = db::open_alerts(&state.db).await?;
+            (a.iter().filter(|x| x.severity == "critical").count(), a.iter().filter(|x| x.severity == "warning").count())
+        },
+    })
+}
+
+pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
+    use crate::server::alerts;
+    let view = |a: &db::Alert| views::AlertView {
+        severity: a.severity.clone(),
+        summary: a.summary.clone(),
+        opened: views::ago(&a.opened),
+        resolved: a.resolved.as_deref().map(views::ago).unwrap_or_default(),
+    };
+    let open: Vec<views::AlertView> = db::open_alerts(&state.db).await?.iter().map(view).collect();
+    let since = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
+    let resolved: Vec<views::AlertView> = db::resolved_alerts(&state.db, &since).await?.iter().map(view).collect();
+    let kv = |k: &str| {
+        let k = k.to_string();
+        let db = state.db.clone();
+        async move { db::kv_get(&db, &k).await.ok().flatten().unwrap_or_default() }
+    };
+    let n = &state.config.notify;
+    let mut channels = Vec::new();
+    if let Some(e) = &n.email {
+        channels.push(format!("e-mail to {}", e.to.join(", ")));
+    }
+    if n.webhook.is_some() {
+        channels.push("webhook".to_string());
+    }
+    let hb_at = kv("notify.heartbeat_at").await;
+    let heartbeat = if n.heartbeat_url.is_empty() {
+        String::new()
+    } else if hb_at.is_empty() {
+        "not sent yet".into()
+    } else {
+        format!("{} {}", if kv("notify.heartbeat_ok").await == "1" { "ok" } else { "FAILED" }, views::ago(&hb_at))
+    };
+    let day = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
+    let mut metrics = Vec::new();
+    for name in ["cpu.busy_pct", "mem.available_pct", "disk.used_pct", "disk.inodes_pct", "load.1", "pressure.mem_full_avg10", "pressure.io_full_avg10", "mem.swap_used_pct"] {
+        let series = db::metric_series(&state.db, name, &day).await?;
+        if series.is_empty() {
+            continue;
+        }
+        let values: Vec<f64> = series.iter().map(|(_, v)| *v).collect();
+        let min = values.iter().cloned().fold(f64::MAX, f64::min);
+        let max = values.iter().cloned().fold(f64::MIN, f64::max);
+        let avg = values.iter().sum::<f64>() / values.len() as f64;
+        metrics.push((name.to_string(), format!("min {min:.1} · avg {avg:.1} · max {max:.1} · now {:.1}", values.last().copied().unwrap_or(0.0))));
+    }
+    let last = kv("notify.last_at").await;
+    html(views::AlertsPage {
+        base: views::Base::new("Alerts", &user.username, &state.config.name, &f),
+        open,
+        resolved,
+        t: alerts::thresholds(&state).await,
+        notify_configured: n.any(),
+        channels: channels.join(", "),
+        notify_last: if last.is_empty() { String::new() } else { views::ago(&last) },
+        notify_error: kv("notify.last_error").await,
+        heartbeat,
+        metrics,
+    })
+}
+
+pub async fn set_thresholds(State(state): State<Shared>, user: User, Form(t): Form<crate::server::alerts::Thresholds>) -> R {
+    if t.disk_warn > t.disk_crit || t.mem_crit > t.mem_warn {
+        return Ok(back("/alerts", None, Some("warning thresholds must come before critical ones")));
+    }
+    crate::server::alerts::set_thresholds(&state, &t).await?;
+    db::audit(&state.db, &user.username, "alerts.thresholds", &serde_json::to_string(&t).unwrap_or_default()).await?;
+    Ok(back("/alerts", Some("thresholds saved"), None))
+}
+
+pub async fn test_notification(State(state): State<Shared>, user: User) -> R {
+    db::audit(&state.db, &user.username, "alerts.test", "").await?;
+    match crate::server::alerts::send_test(&state).await {
+        Ok(()) => Ok(back("/alerts", Some("test notification sent"), None)),
+        Err(e) => Ok(back("/alerts", None, Some(&format!("{e:#}")))),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct EventsQuery {
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    q: String,
+}
+
+pub async fn events(State(state): State<Shared>, user: User, Query(f): Query<Flash>, Query(e): Query<EventsQuery>) -> R {
+    let events = db::events(&state.db, e.kind.trim(), e.q.trim(), 300)
+        .await?
+        .into_iter()
+        .map(|x| views::EventView { ts: views::short_time(&x.ts), kind: x.kind, source: x.source, summary: x.summary })
+        .collect();
+    html(views::EventsPage {
+        base: views::Base::new("Events", &user.username, &state.config.name, &f),
+        events,
+        kinds: db::event_kinds(&state.db).await?,
+        kind: e.kind.trim().to_string(),
+        q: e.q.trim().to_string(),
     })
 }
 

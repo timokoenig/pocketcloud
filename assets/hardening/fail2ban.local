@@ -1,4 +1,6 @@
 [DEFAULT]
+# VPN clients and the host itself are never banned: they hold keys, and the tooling logs in often
+ignoreip = 127.0.0.1/8 ::1 10.8.0.0/24
 banaction = nftables-multiport
 backend = systemd
 bantime = 1h

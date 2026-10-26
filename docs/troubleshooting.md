@@ -108,6 +108,14 @@ that is not in the file. When a service is unhealthy the job log ends with the c
 log lines; the same logs are on the app page per service. The containers of a failed first deploy keep running
 and restarting until the next deploy or a stop.
 
+## ssh over the VPN says "Connection refused"
+
+Almost always the tunnel is off on this device: without it, 10.8.0.1 is routed to your local network and
+something there refuses. Check the WireGuard app first. If the tunnel is up and the interface on 443 works but
+22 is refused, fail2ban banned your VPN address; lift it on the server page under *Banned clients*. The VPN
+range is excluded from bans since 2026-10-26, and the CLI checks reachability with a real ssh login rather than
+a bare TCP connect, which the aggressive sshd jail can count as a failure.
+
 ## Locked out: no tunnel, no public SSH
 
 ```sh

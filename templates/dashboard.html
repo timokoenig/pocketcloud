@@ -6,6 +6,7 @@
 </div>
 {% if !docker_ok %}<div class="flash err">Docker is not reachable. Deploys will fail; check the server page.</div>{% endif %}
 {% if let Some(c) = cert_problem %}<div class="flash err">Certificate problem: {{ c }}</div>{% endif %}
+{% if open_alerts.0 > 0 %}<div class="flash err">{{ open_alerts.0 }} critical alert(s){% if open_alerts.1 > 0 %} and {{ open_alerts.1 }} warning(s){% endif %}. <a href="/alerts">Alerts</a></div>{% else if open_alerts.1 > 0 %}<div class="flash warn">{{ open_alerts.1 }} open warning(s). <a href="/alerts">Alerts</a></div>{% endif %}
 {% if let Some(b) = backup_warning %}<div class="flash warn">{{ b }} <a href="/server">Server page</a></div>{% endif %}
 {% if host.reboot_required %}<div class="flash warn">The server needs a reboot for pending updates. <a href="/server">Server page</a></div>{% endif %}
 {% if apps.is_empty() %}

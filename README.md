@@ -13,6 +13,8 @@ manage compose apps from a web interface that is reachable through WireGuard onl
   `pc-<app>` in `172.30.<n>.0/24` with static addresses, secrets arrive as an env file and as `${NAME}` in the file.
   Deploys are health-gated; a failed deploy rolls back to the previous release.
 - Public routes sit behind a web application firewall (Coraza, OWASP Core Rule Set), switchable per route.
+- Built-in monitoring: journal, auditd, Falco and Docker events plus host metrics, fixed checks, alerts by mail or
+  webhook, a heartbeat for a dead man's switch. Nightly restic backups to S3 with restore.
 - **Recovery**: `pocketcloud rescue` talks to the Hetzner API directly, opens SSH for your address, reboots, or puts
   the master key back from the 24-word recovery phrase.
 

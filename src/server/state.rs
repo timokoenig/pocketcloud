@@ -26,6 +26,14 @@ pub struct State {
     pub pending_configs: Mutex<HashMap<String, (String, String, std::time::Instant)>>,
     /// Caddy was built with the Coraza module (checked once at start)
     pub waf_available: bool,
+    /// latest one-minute sample of host numbers
+    pub sample: RwLock<super::system::Sample>,
+    /// Docker API answered the last ping
+    pub docker_ok: std::sync::atomic::AtomicBool,
+    /// alert keys whose condition is true but has not held long enough yet
+    pub alert_pending: Mutex<HashMap<String, std::time::Instant>>,
+    /// opened and resolved alerts waiting for the next notification batch
+    pub notify_queue: Mutex<Vec<super::notify::Change>>,
 }
 
 pub type Shared = Arc<State>;

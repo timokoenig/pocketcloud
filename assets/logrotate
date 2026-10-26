@@ -5,3 +5,12 @@
   missingok
   notifempty
 }
+
+/var/log/infra/falco.jsonl {
+  weekly
+  rotate 4
+  compress
+  missingok
+  notifempty
+  copytruncate
+}

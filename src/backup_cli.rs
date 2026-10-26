@@ -7,7 +7,6 @@ use crate::cli::{BackupArgs, BackupCommand};
 use crate::crypto::MasterKey;
 use crate::install::{self, Installation};
 use crate::remote::{self, Ssh};
-use crate::wireguard::HUB_IP;
 
 pub struct BackupInput {
     pub endpoint: String,
@@ -24,6 +23,50 @@ pub fn ask() -> Result<BackupInput> {
     let access_key: String = Input::with_theme(&theme).with_prompt("Access key").interact_text()?;
     let secret_key: String = Password::with_theme(&theme).with_prompt("Secret key").interact()?;
     Ok(BackupInput { endpoint: endpoint.trim().to_string(), bucket: bucket.trim().to_string(), access_key: access_key.trim().to_string(), secret_key })
+}
+
+pub struct EmailInput {
+    pub to: Vec<String>,
+    pub from: String,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_tls: String,
+    pub smtp_user: String,
+    pub smtp_password: String,
+}
+
+pub fn ask_email() -> Result<EmailInput> {
+    let theme = ColorfulTheme::default();
+    let to: String = Input::with_theme(&theme).with_prompt("Send alerts to (comma-separated)").interact_text()?;
+    let from: String = Input::with_theme(&theme).with_prompt("From address").interact_text()?;
+    let smtp_host: String = Input::with_theme(&theme).with_prompt("SMTP host").interact_text()?;
+    let smtp_port: u16 = Input::with_theme(&theme).with_prompt("SMTP port").default(587).interact_text()?;
+    let smtp_tls: String = Input::with_theme(&theme).with_prompt("TLS (starttls, implicit, none)").default("starttls".into()).interact_text()?;
+    let smtp_user: String = Input::with_theme(&theme).with_prompt("SMTP user (empty for none)").allow_empty(true).default(String::new()).interact_text()?;
+    let smtp_password = if smtp_user.is_empty() { String::new() } else { Password::with_theme(&theme).with_prompt("SMTP password").interact()? };
+    Ok(EmailInput {
+        to: to.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        from: from.trim().to_string(),
+        smtp_host: smtp_host.trim().to_string(),
+        smtp_port,
+        smtp_tls: smtp_tls.trim().to_string(),
+        smtp_user: smtp_user.trim().to_string(),
+        smtp_password,
+    })
+}
+
+pub fn render_notify_section(e: Option<&EmailInput>, heartbeat_url: &str, falco: bool) -> String {
+    let mut s = format!("\n[notify]\n# a dead man's switch URL (healthchecks.io style) pinged every five minutes while the daemon is healthy\nheartbeat_url = {heartbeat_url:?}\n");
+    if let Some(e) = e {
+        let to = e.to.iter().map(|t| format!("{t:?}")).collect::<Vec<_>>().join(", ");
+        s += &format!(
+            "\n[notify.email]\nto = [{to}]\nfrom = {:?}\nsmtp_host = {:?}\nsmtp_port = {}\nsmtp_tls = {:?}\nsmtp_user = {:?}\nsmtp_password = {:?}\n",
+            e.from, e.smtp_host, e.smtp_port, e.smtp_tls, e.smtp_user, e.smtp_password
+        );
+    }
+    s += "\n# [notify.webhook]\n# url = \"https://example.com/hook\"\n# token = \"\"\n";
+    s += &format!("\n[monitor]\n# Falco runtime detection (eBPF); the installer adds or removes it on the next upgrade\nfalco = {falco}\n");
+    s
 }
 
 pub fn render_section(b: &BackupInput) -> String {
@@ -110,14 +153,7 @@ async fn apply(inst: &Installation, section: Option<&str>) -> Result<()> {
         }
         install::write_private(&local_path, &text)?;
     }
-    let ip = inst.server.ipv4.clone().unwrap_or_default();
-    let host = if remote::tcp_open(&format!("{HUB_IP}:22"), 3).await {
-        HUB_IP.to_string()
-    } else if remote::tcp_open(&format!("{ip}:22"), 4).await {
-        ip
-    } else {
-        anyhow::bail!("server not reachable; activate the VPN or run: pocketcloud rescue {} open-ssh", inst.name);
-    };
+    let host = remote::pick_host(inst).await?;
     let ssh = Ssh::for_installation(inst, &host)?;
     // the edit runs in python on the server; the script travels base64-encoded so no quoting can break it
     let script = format!(

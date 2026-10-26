@@ -129,6 +129,89 @@ pub struct HostStatus {
     pub latest_version: String,
 }
 
+/// One-minute sample of the numbers the checks look at.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Sample {
+    pub sampled: bool,
+    pub cpu_busy_pct: f64,
+    pub mem_available_pct: f64,
+    pub swap_used_pct: f64,
+    pub disk_used_pct: f64,
+    pub inodes_used_pct: f64,
+    pub mem_full_avg10: f64,
+    pub io_full_avg10: f64,
+    pub load1: f64,
+    pub clock_synced: bool,
+}
+
+static LAST_CPU: std::sync::Mutex<Option<(u64, u64)>> = std::sync::Mutex::new(None);
+
+fn pressure(path: &str) -> f64 {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.lines().find(|l| l.starts_with("full")).and_then(|l| l.split_whitespace().find_map(|p| p.strip_prefix("avg10=")).and_then(|v| v.parse().ok())))
+        .unwrap_or(0.0)
+}
+
+pub async fn sample() -> Sample {
+    let mut s = Sample { sampled: true, ..Default::default() };
+    if let Ok(stat) = std::fs::read_to_string("/proc/stat") {
+        if let Some(l) = stat.lines().next() {
+            let f: Vec<u64> = l.split_whitespace().skip(1).filter_map(|x| x.parse().ok()).collect();
+            if f.len() >= 5 {
+                let idle = f[3] + f[4];
+                let total: u64 = f.iter().sum();
+                let mut last = LAST_CPU.lock().unwrap();
+                if let Some((pt, pi)) = *last {
+                    let dt = total.saturating_sub(pt);
+                    if dt > 0 {
+                        s.cpu_busy_pct = 100.0 * (1.0 - idle.saturating_sub(pi) as f64 / dt as f64);
+                    }
+                }
+                *last = Some((total, idle));
+            }
+        }
+    }
+    if let Ok(m) = std::fs::read_to_string("/proc/meminfo") {
+        let get = |k: &str| m.lines().find(|l| l.starts_with(k)).and_then(|l| l.split_whitespace().nth(1)).and_then(|x| x.parse::<f64>().ok()).unwrap_or(0.0);
+        let total = get("MemTotal:");
+        if total > 0.0 {
+            s.mem_available_pct = 100.0 * get("MemAvailable:") / total;
+        }
+        let swap_total = get("SwapTotal:");
+        if swap_total > 0.0 {
+            s.swap_used_pct = 100.0 * (swap_total - get("SwapFree:")) / swap_total;
+        }
+    }
+    if let Ok(df) = run("df", &["--output=pcent,ipcent", "/"]).await {
+        if let Some(l) = df.lines().nth(1) {
+            let mut it = l.split_whitespace().map(|x| x.trim_end_matches('%').parse::<f64>().unwrap_or(0.0));
+            s.disk_used_pct = it.next().unwrap_or(0.0);
+            s.inodes_used_pct = it.next().unwrap_or(0.0);
+        }
+    }
+    s.mem_full_avg10 = pressure("/proc/pressure/memory");
+    s.io_full_avg10 = pressure("/proc/pressure/io");
+    s.load1 = std::fs::read_to_string("/proc/loadavg").ok().and_then(|l| l.split_whitespace().next().and_then(|x| x.parse().ok())).unwrap_or(0.0);
+    s.clock_synced = run("timedatectl", &["show", "-p", "NTPSynchronized", "--value"]).await.map(|o| o.trim() == "yes").unwrap_or(true);
+    s
+}
+
+impl Sample {
+    pub fn metrics(&self) -> Vec<(String, f64)> {
+        vec![
+            ("cpu.busy_pct".into(), self.cpu_busy_pct),
+            ("mem.available_pct".into(), self.mem_available_pct),
+            ("mem.swap_used_pct".into(), self.swap_used_pct),
+            ("disk.used_pct".into(), self.disk_used_pct),
+            ("disk.inodes_pct".into(), self.inodes_used_pct),
+            ("pressure.mem_full_avg10".into(), self.mem_full_avg10),
+            ("pressure.io_full_avg10".into(), self.io_full_avg10),
+            ("load.1".into(), self.load1),
+        ]
+    }
+}
+
 pub async fn quick_status() -> HostStatus {
     let mut s = HostStatus::default();
     s.hostname = std::fs::read_to_string("/etc/hostname").unwrap_or_default().trim().to_string();
@@ -157,7 +240,11 @@ pub async fn quick_status() -> HostStatus {
         }
     }
     s.reboot_required = Path::new("/var/run/reboot-required").exists();
-    for unit in ["docker", "caddy", "wg-quick@wg0", "nftables", "fail2ban", "auditd", "unattended-upgrades"] {
+    let mut units = vec!["docker", "caddy", "wg-quick@wg0", "nftables", "fail2ban", "auditd", "unattended-upgrades"];
+    if Path::new("/etc/systemd/system/multi-user.target.wants/falco-modern-bpf.service").exists() {
+        units.push("falco-modern-bpf");
+    }
+    for unit in units {
         let ok = Command::new("systemctl").args(["is-active", "--quiet", unit]).status().await.map(|s| s.success()).unwrap_or(false);
         s.services.push((unit.to_string(), ok));
     }

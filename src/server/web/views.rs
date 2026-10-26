@@ -88,6 +88,8 @@ pub struct Dashboard {
     pub docker_ok: bool,
     pub cert_problem: Option<String>,
     pub backup_warning: Option<String>,
+    /// (critical, warning) counts of open alerts
+    pub open_alerts: (usize, usize),
 }
 
 pub struct BackupView {
@@ -346,4 +348,44 @@ pub struct AuditView {
 pub struct AuditPage {
     pub base: Base,
     pub entries: Vec<AuditView>,
+}
+
+#[derive(Template)]
+#[template(path = "alerts.html")]
+pub struct AlertsPage {
+    pub base: Base,
+    pub open: Vec<AlertView>,
+    pub resolved: Vec<AlertView>,
+    pub t: crate::server::alerts::Thresholds,
+    pub notify_configured: bool,
+    pub channels: String,
+    pub notify_last: String,
+    pub notify_error: String,
+    pub heartbeat: String,
+    /// (metric, "min / avg / max")
+    pub metrics: Vec<(String, String)>,
+}
+
+pub struct AlertView {
+    pub severity: String,
+    pub summary: String,
+    pub opened: String,
+    pub resolved: String,
+}
+
+#[derive(Template)]
+#[template(path = "events.html")]
+pub struct EventsPage {
+    pub base: Base,
+    pub events: Vec<EventView>,
+    pub kinds: Vec<(String, i64)>,
+    pub kind: String,
+    pub q: String,
+}
+
+pub struct EventView {
+    pub ts: String,
+    pub kind: String,
+    pub source: String,
+    pub summary: String,
 }

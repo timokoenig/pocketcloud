@@ -112,6 +112,32 @@ const SCHEMA: &[&str] = &[
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     )"#,
+    r#"CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY,
+        ts TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        source TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        data TEXT NOT NULL DEFAULT '{}'
+    )"#,
+    "CREATE INDEX IF NOT EXISTS events_ts ON events (ts)",
+    "CREATE INDEX IF NOT EXISTS events_kind_ts ON events (kind, ts)",
+    r#"CREATE TABLE IF NOT EXISTS metrics (
+        ts TEXT NOT NULL,
+        name TEXT NOT NULL,
+        value REAL NOT NULL
+    )"#,
+    "CREATE INDEX IF NOT EXISTS metrics_name_ts ON metrics (name, ts)",
+    r#"CREATE TABLE IF NOT EXISTS alerts (
+        id INTEGER PRIMARY KEY,
+        key TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        opened TEXT NOT NULL,
+        resolved TEXT,
+        last_seen TEXT NOT NULL
+    )"#,
+    "CREATE INDEX IF NOT EXISTS alerts_key_open ON alerts (key, resolved)",
 ];
 
 async fn migrate(db: &Db) -> Result<()> {
@@ -679,3 +705,114 @@ pub async fn audit_entries(db: &Db, limit: i64) -> Result<Vec<AuditEntry>> {
     Ok(sqlx::query_as("SELECT * FROM audit ORDER BY id DESC LIMIT ?").bind(limit).fetch_all(db).await?)
 }
 
+
+// ---- events, metrics, alerts (monitoring) ----
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct Event {
+    pub id: i64,
+    pub ts: String,
+    pub kind: String,
+    pub source: String,
+    pub summary: String,
+    pub data: String,
+}
+
+pub async fn add_event(db: &Db, kind: &str, source: &str, summary: &str, data: &serde_json::Value) -> Result<()> {
+    sqlx::query("INSERT INTO events (ts, kind, source, summary, data) VALUES (?, ?, ?, ?, ?)")
+        .bind(now())
+        .bind(kind)
+        .bind(source)
+        .bind(summary)
+        .bind(data.to_string())
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Recent events, newest first; `kind` and `q` (substring of the summary) optional.
+pub async fn events(db: &Db, kind: &str, q: &str, limit: i64) -> Result<Vec<Event>> {
+    Ok(sqlx::query_as(
+        "SELECT * FROM events WHERE (? = '' OR kind = ?) AND (? = '' OR summary LIKE '%' || ? || '%' OR data LIKE '%' || ? || '%') ORDER BY id DESC LIMIT ?",
+    )
+    .bind(kind)
+    .bind(kind)
+    .bind(q)
+    .bind(q)
+    .bind(q)
+    .bind(limit)
+    .fetch_all(db)
+    .await?)
+}
+
+pub async fn events_since(db: &Db, kind: &str, since: &str) -> Result<Vec<Event>> {
+    Ok(sqlx::query_as("SELECT * FROM events WHERE kind = ? AND ts >= ? ORDER BY id").bind(kind).bind(since).fetch_all(db).await?)
+}
+
+pub async fn event_kinds(db: &Db) -> Result<Vec<(String, i64)>> {
+    Ok(sqlx::query_as("SELECT kind, count(*) FROM events GROUP BY kind ORDER BY kind").fetch_all(db).await?)
+}
+
+pub async fn add_metrics(db: &Db, samples: &[(String, f64)]) -> Result<()> {
+    let ts = now();
+    let mut tx = db.begin().await?;
+    for (name, value) in samples {
+        sqlx::query("INSERT INTO metrics (ts, name, value) VALUES (?, ?, ?)").bind(&ts).bind(name).bind(value).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn metric_series(db: &Db, name: &str, since: &str) -> Result<Vec<(String, f64)>> {
+    Ok(sqlx::query_as("SELECT ts, value FROM metrics WHERE name = ? AND ts >= ? ORDER BY ts").bind(name).bind(since).fetch_all(db).await?)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct Alert {
+    pub id: i64,
+    pub key: String,
+    pub severity: String,
+    pub summary: String,
+    pub opened: String,
+    pub resolved: Option<String>,
+    pub last_seen: String,
+}
+
+pub async fn open_alerts(db: &Db) -> Result<Vec<Alert>> {
+    Ok(sqlx::query_as("SELECT * FROM alerts WHERE resolved IS NULL ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, opened DESC").fetch_all(db).await?)
+}
+
+pub async fn resolved_alerts(db: &Db, since: &str) -> Result<Vec<Alert>> {
+    Ok(sqlx::query_as("SELECT * FROM alerts WHERE resolved IS NOT NULL AND resolved >= ? ORDER BY resolved DESC").bind(since).fetch_all(db).await?)
+}
+
+pub async fn open_alert(db: &Db, key: &str, severity: &str, summary: &str) -> Result<i64> {
+    let n = now();
+    let r = sqlx::query("INSERT INTO alerts (key, severity, summary, opened, last_seen) VALUES (?, ?, ?, ?, ?)")
+        .bind(key)
+        .bind(severity)
+        .bind(summary)
+        .bind(&n)
+        .bind(&n)
+        .execute(db)
+        .await?;
+    Ok(r.last_insert_rowid())
+}
+
+pub async fn touch_alert(db: &Db, id: i64, severity: &str, summary: &str) -> Result<()> {
+    sqlx::query("UPDATE alerts SET last_seen = ?, severity = ?, summary = ? WHERE id = ?").bind(now()).bind(severity).bind(summary).bind(id).execute(db).await?;
+    Ok(())
+}
+
+pub async fn resolve_alert(db: &Db, id: i64) -> Result<()> {
+    sqlx::query("UPDATE alerts SET resolved = ? WHERE id = ? AND resolved IS NULL").bind(now()).bind(id).execute(db).await?;
+    Ok(())
+}
+
+/// Delete old rows: events and metrics by age, resolved alerts by age.
+pub async fn purge_monitoring(db: &Db, events_before: &str, metrics_before: &str, alerts_before: &str) -> Result<()> {
+    sqlx::query("DELETE FROM events WHERE ts < ?").bind(events_before).execute(db).await?;
+    sqlx::query("DELETE FROM metrics WHERE ts < ?").bind(metrics_before).execute(db).await?;
+    sqlx::query("DELETE FROM alerts WHERE resolved IS NOT NULL AND resolved < ?").bind(alerts_before).execute(db).await?;
+    Ok(())
+}

@@ -70,6 +70,11 @@ pub async fn prepare(state: &State, app: &db::App, compose_text: Option<&str>) -
 }
 
 pub async fn deploy(state: Shared, app_id: i64, log: Log, pull: bool) -> Result<()> {
+    deploy_with(state, app_id, log, pull, true).await
+}
+
+/// `announce`: record a "deployed" event; the resume after a restart does not.
+pub async fn deploy_with(state: Shared, app_id: i64, log: Log, pull: bool, announce: bool) -> Result<()> {
     let app = db::app(&state.db, app_id).await?.ok_or_else(|| anyhow!("app not found"))?;
     db::set_app_status(&state.db, app.id, "deploying", "").await?;
     let result = deploy_inner(&state, &app, &log, pull).await;
@@ -78,11 +83,15 @@ pub async fn deploy(state: Shared, app_id: i64, log: Log, pull: bool) -> Result<
             db::set_app_desired(&state.db, app.id, "running").await?;
             db::set_app_status(&state.db, app.id, "running", "").await?;
             reconcile::apply(&state).await?;
+            if announce {
+                let _ = db::add_event(&state.db, "deployed", "pocketcloud", &format!("{} deployed", app.name), &serde_json::json!({"app": app.name})).await;
+            }
             log.line("deployed").await;
             Ok(())
         }
         Err(e) => {
             log.line(format!("deploy failed: {e:#}")).await;
+            let _ = db::add_event(&state.db, "deploy_failed", "pocketcloud", &format!("deploy of {} failed: {e:#}", app.name), &serde_json::json!({"app": app.name})).await;
             rollback(&state, &app, &log, &e.to_string()).await
         }
     }
@@ -305,7 +314,7 @@ pub async fn resume_all(state: Shared) -> Result<()> {
         let redact = secret_values(&state, app.id).await.unwrap_or_default();
         let _ = super::jobs::spawn(&state, "resume", Some(app.id), redact, move |s, log| async move {
             let _ = &st;
-            deploy(s, app.id, log, false).await
+            deploy_with(s, app.id, log, false, false).await
         })
         .await;
     }

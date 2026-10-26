@@ -24,6 +24,11 @@ pub struct Config {
     /// Nightly restic backups; absent means off and no backup UI
     #[serde(default)]
     pub backup: Option<BackupConfig>,
+    /// Where alerts go; absent means alerts only show in the interface
+    #[serde(default)]
+    pub notify: NotifyConfig,
+    #[serde(default)]
+    pub monitor: MonitorConfig,
     /// Seeded into the users table on first start, then ignored
     pub bootstrap_user: Option<BootstrapUser>,
     /// Developer mode: no nftables, wireguard, caddy, docker or acme calls, for running on a laptop
@@ -88,6 +93,70 @@ pub struct InitialPeer {
 
 fn default_upstreams() -> Vec<String> {
     vec!["185.12.64.1:53".into(), "185.12.64.2:53".into()]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NotifyConfig {
+    #[serde(default)]
+    pub email: Option<EmailConfig>,
+    #[serde(default)]
+    pub webhook: Option<WebhookConfig>,
+    /// GET every five minutes while the daemon is healthy; a dead man's switch service mails you when it stops
+    #[serde(default)]
+    pub heartbeat_url: String,
+}
+
+impl NotifyConfig {
+    pub fn any(&self) -> bool {
+        self.email.is_some() || self.webhook.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailConfig {
+    pub to: Vec<String>,
+    pub from: String,
+    pub smtp_host: String,
+    #[serde(default = "default_smtp_port")]
+    pub smtp_port: u16,
+    /// starttls | implicit | none
+    #[serde(default = "default_smtp_tls")]
+    pub smtp_tls: String,
+    #[serde(default)]
+    pub smtp_user: String,
+    #[serde(default)]
+    pub smtp_password: String,
+}
+
+fn default_smtp_port() -> u16 {
+    587
+}
+fn default_smtp_tls() -> String {
+    "starttls".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookConfig {
+    pub url: String,
+    #[serde(default)]
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorConfig {
+    /// Falco runtime detection (eBPF); the installer adds or removes it
+    #[serde(default = "default_true")]
+    pub falco: bool,
+}
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        MonitorConfig { falco: true }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

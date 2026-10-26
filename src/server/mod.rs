@@ -1,4 +1,5 @@
 pub mod acme;
+pub mod alerts;
 pub mod backup;
 pub mod caddy;
 pub mod compose;
@@ -7,7 +8,9 @@ pub mod db;
 pub mod deploy;
 pub mod dns;
 pub mod docker;
+pub mod events;
 pub mod jobs;
+pub mod notify;
 pub mod reconcile;
 pub mod state;
 pub mod system;
@@ -44,6 +47,12 @@ pub async fn run(args: ServerArgs) -> Result<()> {
             let app_id = a.id;
             let id = jobs::spawn(&state, "restore", Some(a.id), redact, move |s, log| backup::restore_app(s, app_id, snapshot, log)).await?;
             wait_for_job(&state, id).await
+        }
+        ServerCommand::NotifyTest => {
+            let state = build_state(config).await?;
+            alerts::send_test(&state).await?;
+            println!("test notification sent");
+            Ok(())
         }
         ServerCommand::Backup => {
             let state = build_state(config).await?;
@@ -130,6 +139,10 @@ async fn build_state(config: Config) -> Result<Shared> {
         started: chrono::Utc::now(),
         pending_configs: Mutex::new(HashMap::new()),
         waf_available,
+        sample: RwLock::new(Default::default()),
+        docker_ok: std::sync::atomic::AtomicBool::new(true),
+        alert_pending: Mutex::new(HashMap::new()),
+        notify_queue: Mutex::new(Vec::new()),
         config,
     }))
 }
@@ -224,12 +237,59 @@ async fn daemon(config: Config) -> Result<()> {
         }
     });
 
+    // collectors: journal facts, auditd, falco, docker events
+    if !state.config.dev {
+        tokio::spawn(events::journal_tailer(state.clone()));
+        tokio::spawn(events::file_tailer(state.clone(), "/var/log/audit/audit.log", "audit", events::audit_fact));
+        tokio::spawn(events::file_tailer(state.clone(), "/var/log/infra/falco.jsonl", "falco", events::falco_fact));
+        let st = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = events::docker_events(st).await {
+                tracing::warn!("docker events: {e:#}");
+            }
+        });
+    }
+
+    // alerts: evaluate every minute (every 5 s in dev mode), notify in batches, heartbeat every 5 minutes
+    let st = state.clone();
+    tokio::spawn(async move {
+        let period = if st.config.dev { 5 } else { 60 };
+        let mut n = 0u64;
+        loop {
+            tokio::time::sleep(Duration::from_secs(period)).await;
+            if let Err(e) = alerts::tick(&st).await {
+                tracing::warn!("alerts: {e:#}");
+            }
+            n += 1;
+            if n % (60 / period) == 0 {
+                alerts::flush_notifications(&st).await;
+            }
+            if n % (300 / period) == 0 {
+                notify::heartbeat(&st).await;
+            }
+        }
+    });
+
     // host status, hourly the slow parts
     let st = state.clone();
     tokio::spawn(async move {
         let mut tick = 0u64;
         loop {
             if !st.config.dev {
+                let sample = system::sample().await;
+                let _ = db::add_metrics(&st.db, &sample.metrics()).await;
+                *st.sample.write().await = sample;
+                st.docker_ok.store(docker::ping(&st).await, std::sync::atomic::Ordering::Relaxed);
+                if tick.is_multiple_of(60) {
+                    let now = chrono::Utc::now();
+                    let _ = db::purge_monitoring(
+                        &st.db,
+                        &(now - chrono::Duration::days(14)).to_rfc3339(),
+                        &(now - chrono::Duration::hours(48)).to_rfc3339(),
+                        &(now - chrono::Duration::days(90)).to_rfc3339(),
+                    )
+                    .await;
+                }
                 let mut s = system::quick_status().await;
                 let prev = st.host.read().await.clone();
                 s.pending_updates = prev.pending_updates;

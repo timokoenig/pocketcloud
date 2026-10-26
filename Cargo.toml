@@ -42,6 +42,7 @@ console = "0.15"
 directories = "5"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "ring", "builder"] }
 futures-util = "0.3"
 semver = "1"
 x509-parser = "0.16"
