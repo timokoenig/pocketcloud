@@ -388,6 +388,7 @@ pub async fn remove(State(state): State<Shared>, user: User, Path(id): Path<i64>
     }
     let volumes = f.volumes.is_some();
     db::audit(&state.db, &user.username, "app.remove", &format!("{} volumes={volumes}", app.name)).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} removed app {} (volumes deleted: {volumes})", user.username, app.name), &serde_json::json!({"user": user.username, "action": "app.remove"})).await;
     let redact = deploy::secret_values(&state, app.id).await?;
     match jobs::spawn(&state, "remove", Some(id), redact, move |s, log| deploy::remove(s, id, volumes, log)).await {
         Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
@@ -457,6 +458,9 @@ pub async fn set_route_flag(State(state): State<Shared>, user: User, Path((id, r
         return Ok(back(&format!("/apps/{id}"), None, Some(&e.to_string())));
     }
     db::audit(&state.db, &user.username, "route.flag", &format!("{} route {rid} {}={on}", app.name, f.what)).await?;
+    if !on {
+        let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} switched {} off for a route of {}", user.username, f.what, app.name), &serde_json::json!({"user": user.username, "action": "route.flag"})).await;
+    }
     crate::server::reconcile::apply(&state).await?;
     Ok(back(&format!("/apps/{id}"), Some(&format!("{} {} for the route", f.what, if on { "enabled" } else { "disabled" })), None))
 }

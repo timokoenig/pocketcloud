@@ -19,9 +19,12 @@ jobs:
       - run: cargo install cargo-zigbuild
       - run: cargo zigbuild --release --target ${{ matrix.target }}
       - run: cp target/${{ matrix.target }}/release/pocketcloud pocketcloud-${{ matrix.target }}
+      - run: sha256sum pocketcloud-${{ matrix.target }} > pocketcloud-${{ matrix.target }}.sha256
       - uses: softprops/action-gh-release@v2
         with:
-          files: pocketcloud-${{ matrix.target }}
+          files: |
+            pocketcloud-${{ matrix.target }}
+            pocketcloud-${{ matrix.target }}.sha256
           generate_release_notes: true
   caddy:
     runs-on: ubuntu-latest
@@ -37,10 +40,13 @@ jobs:
         with:
           go-version: stable
       - run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-      - run: GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 xcaddy build --with github.com/corazawaf/coraza-caddy/v2 --output caddy-${{ matrix.target }}
+      - run: GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 xcaddy build --with github.com/corazawaf/coraza-caddy/v2@v2.6.2 --output caddy-${{ matrix.target }}
+      - run: sha256sum caddy-${{ matrix.target }} > caddy-${{ matrix.target }}.sha256
       - uses: softprops/action-gh-release@v2
         with:
-          files: caddy-${{ matrix.target }}
+          files: |
+            caddy-${{ matrix.target }}
+            caddy-${{ matrix.target }}.sha256
   macos:
     runs-on: macos-latest
     steps:

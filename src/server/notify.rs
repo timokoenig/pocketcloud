@@ -84,8 +84,8 @@ pub fn body(name: &str, interface: &str, changes: &[Change]) -> String {
     out
 }
 
-/// Deliver one batch to every configured channel; errors are recorded, never fatal.
-pub async fn deliver(state: &Shared, changes: &[Change]) {
+/// Deliver one batch to every configured channel; errors are recorded, never fatal. True when every channel took it.
+pub async fn deliver(state: &Shared, changes: &[Change]) -> bool {
     let cfg: &NotifyConfig = &state.config.notify;
     let name = &state.config.name;
     let mut errors = Vec::new();
@@ -107,12 +107,34 @@ pub async fn deliver(state: &Shared, changes: &[Change]) {
     } else {
         tracing::warn!("notification problems: {}", errors.join("; "));
     }
+    errors.is_empty()
 }
 
-/// GET the heartbeat URL; the dead man's switch behind it alerts when the pings stop.
+/// healthchecks.io style: GET <url>/fail marks the check failed at once, so the dead man's switch carries
+/// the bad news when the daemon cannot deliver its own alerts.
+pub async fn heartbeat_fail(state: &Shared) {
+    let url = &state.config.notify.heartbeat_url;
+    if url.is_empty() {
+        return;
+    }
+    if let Ok(c) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() {
+        let _ = c.get(format!("{}/fail", url.trim_end_matches('/'))).send().await;
+    }
+}
+
+/// GET the heartbeat URL; the dead man's switch behind it alerts when the pings stop. Sent only while the
+/// monitoring itself works: checks evaluate, the journal collector sees lines, deliveries are not failing.
 pub async fn heartbeat(state: &Shared) {
     let url = &state.config.notify.heartbeat_url;
     if url.is_empty() {
+        return;
+    }
+    let tick_ok = state.tick_ok.load(std::sync::atomic::Ordering::Relaxed);
+    let journal_age = chrono::Utc::now().timestamp() - state.journal_seen.load(std::sync::atomic::Ordering::Relaxed);
+    let failures = db::kv_get(&state.db, "notify.failures").await.ok().flatten().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    if !tick_ok || journal_age > 30 * 60 || failures >= 3 {
+        tracing::warn!("heartbeat withheld: tick_ok={tick_ok} journal_age_s={journal_age} delivery_failures={failures}");
+        heartbeat_fail(state).await;
         return;
     }
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build();
@@ -122,6 +144,27 @@ pub async fn heartbeat(state: &Shared) {
     };
     let _ = db::kv_set(&state.db, "notify.heartbeat_ok", if res { "1" } else { "0" }).await;
     let _ = db::kv_set(&state.db, "notify.heartbeat_at", &db::now()).await;
+}
+
+/// Security events go to the webhook as they are stored (once a minute), so an off-box copy exists even if
+/// the host is later cleaned. Alerts are separate.
+pub async fn stream_events(state: &Shared) {
+    let Some(w) = &state.config.notify.webhook else { return };
+    let last: i64 = db::kv_get(&state.db, "events.streamed_id").await.ok().flatten().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let Ok(events) = db::events_after(&state.db, last, 500).await else { return };
+    let security: Vec<&db::Event> = events
+        .iter()
+        .filter(|e| matches!(e.kind.as_str(), "ssh_login" | "ssh_failed" | "login" | "login_failed" | "sudo" | "ban" | "audit_write" | "audit_denied" | "audit_setuid" | "audit_module" | "audit_time" | "falco" | "container_exec" | "container_foreign" | "admin_action" | "deployed" | "deploy_failed" | "kernel_error"))
+        .collect();
+    if let Some(max) = events.iter().map(|e| e.id).max() {
+        if !security.is_empty() {
+            let payload = serde_json::json!({"installation": state.config.name, "events": security});
+            if send_webhook(&w.url, &w.token, &payload).await.is_err() {
+                return; // retried next minute from the same id
+            }
+        }
+        let _ = db::kv_set(&state.db, "events.streamed_id", &max.to_string()).await;
+    }
 }
 
 pub fn one_line(text: &str, max: usize) -> String {

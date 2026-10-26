@@ -84,6 +84,8 @@ file_output:
   enabled: true
   keep_alive: false
   filename: /var/log/infra/falco.jsonl
+webserver:
+  enabled: false
 YAML
   systemctl disable --now falco-bpf falco-kmod >/dev/null 2>&1 || true
   systemctl enable --now falco-modern-bpf >/dev/null 2>&1 || systemctl restart falco-modern-bpf || true
@@ -152,6 +154,7 @@ fi
 put "$STAGE/hardening/sysctl.conf" /etc/sysctl.d/90-hardening.conf 0644 && sysctl --system >/dev/null
 put "$STAGE/hardening/fail2ban-waf.conf" /etc/fail2ban/filter.d/pocketcloud-waf.conf 0644 || true
 put "$STAGE/hardening/fail2ban.local" /etc/fail2ban/jail.local 0644 || true
+put "$STAGE/hardening/fail2ban-main.local" /etc/fail2ban/fail2ban.local 0644 || true
 put "$STAGE/hardening/apt-unattended.conf" /etc/apt/apt.conf.d/52unattended-upgrades-local 0644 || true
 install -d /etc/systemd/journald.conf.d
 put "$STAGE/hardening/journald.conf" /etc/systemd/journald.conf.d/persist.conf 0644 && systemctl restart systemd-journald
@@ -181,12 +184,23 @@ fi
 [[ -f "$STAGE/master.key" ]] && install -m 0600 "$STAGE/master.key" /etc/pocketcloud/master.key
 install -m 0644 "$STAGE/units/pocketcloud.service" /etc/systemd/system/
 install -m 0644 "$STAGE/units/pocketcloud-aide.service" "$STAGE/units/pocketcloud-aide.timer" /etc/systemd/system/
-install -m 0640 "$STAGE/audit.rules" /etc/audit/rules.d/pocketcloud.rules
+sed "s/\${SSH_USER}/${SSH_USER:-admin}/" "$STAGE/audit.rules" > "$STAGE/audit.rendered"
+install -m 0640 "$STAGE/audit.rendered" /etc/audit/rules.d/pocketcloud.rules
 install -m 0644 "$STAGE/aide.conf" /etc/aide/aide.conf.d/99-pocketcloud
 install -m 0644 "$STAGE/logrotate" /etc/logrotate.d/pocketcloud
 
+# aide-common pulls in a mail transport (postfix); nothing here sends local mail, so it listens on loopback only
+if command -v postconf >/dev/null && [[ "$(postconf -h inet_interfaces 2>/dev/null)" != "loopback-only" ]]; then
+  postconf -e inet_interfaces=loopback-only
+  systemctl restart postfix >/dev/null 2>&1 || true
+fi
+
 log "audit, aide, fail2ban"
 augenrules --load >/dev/null 2>&1 || true
+# -e 2 locks the rules until reboot; after a rule change the new set applies at the next reboot
+if auditctl -s 2>/dev/null | grep -q "enabled 2" && ! auditctl -l 2>/dev/null | grep -q "/home/${SSH_USER:-admin}/.ssh"; then
+  log "audit rules changed; they apply after the next reboot (the running set is locked)"
+fi
 systemctl enable --now auditd fail2ban nftables >/dev/null 2>&1 || true
 systemctl restart fail2ban || true
 # aide database in the background: the first one, and a fresh baseline after every installer run so the

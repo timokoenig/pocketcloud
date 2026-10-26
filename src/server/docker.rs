@@ -157,6 +157,15 @@ pub async fn logs(docker: &Docker, container_id: &str, tail: usize) -> Result<St
     Ok(out)
 }
 
+/// Running containers that belong to no compose project: nothing pocketcloud started.
+pub async fn foreign_containers(docker: &Docker) -> Vec<String> {
+    let Ok(list) = docker.list_containers(Some(ListContainersOptions::<String> { all: false, ..Default::default() })).await else { return vec![] };
+    list.into_iter()
+        .filter(|c| !c.labels.as_ref().map(|l| l.contains_key("com.docker.compose.project")).unwrap_or(false))
+        .map(|c| c.names.unwrap_or_default().first().map(|n| n.trim_start_matches('/').to_string()).unwrap_or_default())
+        .collect()
+}
+
 pub async fn ping(state: &Shared) -> bool {
     match &state.docker {
         Some(d) => d.ping().await.is_ok(),

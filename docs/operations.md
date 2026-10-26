@@ -40,6 +40,28 @@ the subject. `heartbeat_url` is pinged every five minutes while the daemon runs,
 (healthchecks.io style) that tells you when the server itself is gone, the one thing it cannot report.
 *Send test notification* on the Alerts page and `sudo pocketcloud server notify-test` prove the channels.
 
+Live-state checks catch "up but not what the database says": every route of a running app is fetched through
+Caddy once a minute and three failures in a row alert; listening sockets outside the expected set alert;
+containers started outside pocketcloud alert; the configuration is re-applied every ten minutes and an error
+doing so alerts. The monitoring watches itself too: a silent journal collector, auditd not enabled, an AIDE
+check that failed or has not run for 36 hours, and failing deliveries all open alerts.
+
+Point events (an ssh login, a sensitive file change, a Falco event, a failed job) are told once and close
+silently; conditions (disk, a route down) announce their end. Every ssh login is mailed by default (one admin:
+every login is worth a line; *Alerts* can switch it off), as is every security-relevant interface action: a new
+or revoked VPN device, registry credentials, a WAF switched off, an app removed, a restore.
+
+Delivery is retried every minute until it works (capped at 200 changes); after three failures in a row the
+heartbeat is sent as `/fail`. The heartbeat itself is withheld while the checks error, the journal collector has
+seen nothing for 30 minutes, or deliveries fail, so it means "monitoring works", not just "process alive". With a
+webhook configured, security events are also streamed to it once a minute as they are stored, which leaves an
+off-box copy an intruder cannot clean.
+
+AIDE findings after package updates (unattended-upgrades, Server → Upgrade) refresh the baseline automatically
+and only inform; findings without a package change in between stay a warning until you re-baseline. Pending
+packages from third-party repositories (Docker, Caddy, Falco, Trivy) are not installed by unattended-upgrades and
+open a warning until Server → Upgrade.
+
 Falco (`[monitor] falco = true`, the default) is the Falco package with the eBPF probe, writing JSON events to
 `/var/log/infra/falco.jsonl`; the installer adds or removes it on the next upgrade. It costs about 150 MB.
 

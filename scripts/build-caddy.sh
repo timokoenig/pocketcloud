@@ -18,6 +18,6 @@ for t in "${targets[@]}"; do
   echo "building caddy for $t"
   podman run --rm -v "$PWD/dist":/out:Z -v "$PWD/.caddy-cache":/go/pkg/mod:Z \
     -e GOOS=linux -e GOARCH="$arch" -e CGO_ENABLED=0 "$image" \
-    xcaddy build --with github.com/corazawaf/coraza-caddy/v2 --output "/out/caddy-$t"
+    xcaddy build --with github.com/corazawaf/coraza-caddy/v2@v2.6.2 --output "/out/caddy-$t"
   ls -la "dist/caddy-$t"
 done

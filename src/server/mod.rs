@@ -98,6 +98,12 @@ async fn wait_for_job(state: &Shared, id: i64) -> Result<()> {
 
 async fn build_state(config: Config) -> Result<Shared> {
     let waf_available = config.dev || system::caddy_has_waf().await;
+    if let Some(e) = &config.notify.email {
+        let bad: Vec<String> = std::iter::once(&e.from).chain(e.to.iter()).filter(|a| a.parse::<lettre::message::Mailbox>().is_err()).cloned().collect();
+        if !bad.is_empty() {
+            tracing::error!("notify.email: these addresses do not parse: {}", bad.join(", "));
+        }
+    }
     if !waf_available {
         tracing::warn!("caddy has no Coraza module; public routes run without the WAF until `pocketcloud upgrade` installs the bundled build");
     }
@@ -143,6 +149,10 @@ async fn build_state(config: Config) -> Result<Shared> {
         docker_ok: std::sync::atomic::AtomicBool::new(true),
         alert_pending: Mutex::new(HashMap::new()),
         notify_queue: Mutex::new(Vec::new()),
+        point_events: Mutex::new(std::collections::HashSet::new()),
+        tick_ok: std::sync::atomic::AtomicBool::new(true),
+        journal_seen: std::sync::atomic::AtomicI64::new(chrono::Utc::now().timestamp()),
+        probe_failures: Mutex::new(HashMap::new()),
         config,
     }))
 }
@@ -160,6 +170,10 @@ async fn refresh_public_ips(state: &Shared) -> Result<()> {
 async fn daemon(config: Config) -> Result<()> {
     let state = build_state(config).await?;
     db::fail_stale_jobs(&state.db).await?;
+    if let Some(e) = &state.config.notify.email {
+        let bad: Vec<String> = std::iter::once(&e.from).chain(e.to.iter()).filter(|a| a.parse::<lettre::message::Mailbox>().is_err()).cloned().collect();
+        let _ = db::kv_set(&state.db, "notify.last_error", &if bad.is_empty() { String::new() } else { format!("email addresses do not parse: {}", bad.join(", ")) }).await;
+    }
     tracing::info!("pocketcloud {} starting, interface at https://{}", env!("CARGO_PKG_VERSION"), state.config.interface_host);
 
     // public ips: the interface's own global addresses; retried until the network is up
@@ -195,6 +209,7 @@ async fn daemon(config: Config) -> Result<()> {
 
     if let Err(e) = reconcile::apply(&state).await {
         tracing::error!("initial reconcile: {e:#}");
+        let _ = db::kv_set(&state.db, "reconcile.last_error", &format!("{e:#}")).await;
     }
 
     // the web interface
@@ -257,15 +272,29 @@ async fn daemon(config: Config) -> Result<()> {
         let mut n = 0u64;
         loop {
             tokio::time::sleep(Duration::from_secs(period)).await;
-            if let Err(e) = alerts::tick(&st).await {
-                tracing::warn!("alerts: {e:#}");
+            match alerts::tick(&st).await {
+                Ok(()) => st.tick_ok.store(true, std::sync::atomic::Ordering::Relaxed),
+                Err(e) => {
+                    st.tick_ok.store(false, std::sync::atomic::Ordering::Relaxed);
+                    tracing::warn!("alerts: {e:#}");
+                }
             }
             n += 1;
             if n % (60 / period) == 0 {
                 alerts::flush_notifications(&st).await;
+                notify::stream_events(&st).await;
             }
             if n % (300 / period) == 0 {
                 notify::heartbeat(&st).await;
+            }
+            // the configuration is re-applied every ten minutes: idempotent, and it catches drift
+            // (a flushed ruleset, a Caddy that lost its config, a removed peer)
+            if !st.config.dev && n % (600 / period) == 0 {
+                let err = match reconcile::apply(&st).await {
+                    Ok(()) => String::new(),
+                    Err(e) => format!("{e:#}"),
+                };
+                let _ = db::kv_set(&st.db, "reconcile.last_error", &err).await;
             }
         }
     });

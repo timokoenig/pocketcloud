@@ -46,6 +46,12 @@ pub async fn dashboard(State(state): State<Shared>, user: User, Query(f): Query<
             let a = db::open_alerts(&state.db).await?;
             (a.iter().filter(|x| x.severity == "critical").count(), a.iter().filter(|x| x.severity == "warning").count())
         },
+        day_events: db::event_kinds_since(&state.db, &(chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339())
+            .await?
+            .iter()
+            .map(|(k, n)| format!("{n} {k}"))
+            .collect::<Vec<_>>()
+            .join(", "),
     })
 }
 
@@ -259,6 +265,7 @@ pub async fn vpn_add(State(state): State<Shared>, user: User, Form(f): Form<Peer
         return Ok(back("/vpn", None, Some(&format!("not added: {e}"))));
     }
     db::audit(&state.db, &user.username, "vpn.add", &format!("{name} {} {ip}", scope.as_str())).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} added VPN device {name} ({}, {ip})", user.username, scope.as_str()), &serde_json::json!({"user": user.username, "action": "vpn.add"})).await;
     reconcile::apply(&state).await?;
     let endpoint = state.public_ips.read().await.iter().find(|i| !i.contains(':')).cloned().unwrap_or_default();
     let hub_pub = wireguard::public_key_of(&state.config.vpn.hub_private_key)?;
@@ -314,6 +321,7 @@ pub async fn vpn_delete(State(state): State<Shared>, user: User, Path(id): Path<
     let name = peers.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
     db::delete_vpn_peer(&state.db, id).await?;
     db::audit(&state.db, &user.username, "vpn.delete", &name).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} revoked VPN device {name}", user.username), &serde_json::json!({"user": user.username, "action": "vpn.delete"})).await;
     reconcile::apply(&state).await?;
     Ok(back("/vpn", Some("device removed, its tunnel is closed"), None))
 }
@@ -346,6 +354,7 @@ pub async fn registry_put(State(state): State<Shared>, user: User, Form(f): Form
     }
     db::put_registry(&state.db, &host, f.username.trim(), &state.key.seal(f.password.trim().as_bytes())).await?;
     db::audit(&state.db, &user.username, "registry.put", &host).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} set registry credentials for {host}", user.username), &serde_json::json!({"user": user.username, "action": "registry.put"})).await;
     Ok(back("/registries", Some("registry saved"), None))
 }
 
@@ -470,6 +479,7 @@ pub async fn restore_import(State(state): State<Shared>, user: User, Form(f): Fo
         return Ok(back("/server", None, Some("type restore to confirm")));
     }
     db::audit(&state.db, &user.username, "server.restore", &f.snapshot).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} started a restore of all apps from snapshot {}", user.username, f.snapshot.trim()), &serde_json::json!({"user": user.username, "action": "server.restore"})).await;
     let redact = state.config.backup.as_ref().map(|b| vec![b.secret_key.clone()]).unwrap_or_default();
     let snap = f.snapshot.trim().to_string();
     match jobs::spawn(&state, "restore-all", None, redact, move |s, log| crate::server::backup::restore_import(s, snap, log)).await {

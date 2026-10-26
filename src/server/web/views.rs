@@ -90,6 +90,8 @@ pub struct Dashboard {
     pub backup_warning: Option<String>,
     /// (critical, warning) counts of open alerts
     pub open_alerts: (usize, usize),
+    /// "12 ssh_login, 3 waf_block" for the last 24 hours
+    pub day_events: String,
 }
 
 pub struct BackupView {

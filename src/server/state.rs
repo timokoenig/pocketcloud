@@ -34,6 +34,14 @@ pub struct State {
     pub alert_pending: Mutex<HashMap<String, std::time::Instant>>,
     /// opened and resolved alerts waiting for the next notification batch
     pub notify_queue: Mutex<Vec<super::notify::Change>>,
+    /// open alerts that are point events (close silently)
+    pub point_events: Mutex<std::collections::HashSet<String>>,
+    /// the last alert evaluation succeeded (gates the heartbeat)
+    pub tick_ok: std::sync::atomic::AtomicBool,
+    /// unix time of the last journal line the collector saw
+    pub journal_seen: std::sync::atomic::AtomicI64,
+    /// consecutive failed route probes per host
+    pub probe_failures: Mutex<HashMap<String, u32>>,
 }
 
 pub type Shared = Arc<State>;

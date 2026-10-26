@@ -1,0 +1,3 @@
+[Definition]
+# the daemon reads bans from the journal
+logtarget = SYSTEMD-JOURNAL

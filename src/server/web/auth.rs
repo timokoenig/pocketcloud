@@ -57,14 +57,23 @@ pub async fn login(State(state): State<Shared>, headers: axum::http::HeaderMap, 
     let user = db::user_by_name(&state.db, f.username.trim()).await?;
     let dummy = "$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     let hash = user.as_ref().map(|u| u.password_hash.as_str()).unwrap_or(dummy);
+    let remote = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).unwrap_or("").split(',').next().unwrap_or("").trim().to_string();
+    // lockout: ten failures from one address in ten minutes
+    let since = (chrono::Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
+    let failures = db::events_since(&state.db, "login_failed", &since).await.unwrap_or_default().into_iter().filter(|e| e.data.contains(&format!("\"ip\":\"{remote}\""))).count();
+    if failures >= 10 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        return Ok(back("/login", None, Some("too many failed logins from your address; try again in ten minutes")));
+    }
     let ok = crypto::verify_password(&f.password, hash) && user.is_some();
     if !ok {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        db::audit(&state.db, f.username.trim(), "login.failed", "").await?;
+        db::audit(&state.db, f.username.trim(), "login.failed", &remote).await?;
+        let _ = db::add_event(&state.db, "login_failed", "pocketcloud", &format!("interface login failed for {} from {remote}", f.username.trim()), &serde_json::json!({"user": f.username.trim(), "ip": remote})).await;
         return Ok(back("/login", None, Some("wrong username or password")));
     }
     let user = user.unwrap();
-    let remote = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let _ = db::add_event(&state.db, "login", "pocketcloud", &format!("interface login {} from {remote}", user.username), &serde_json::json!({"user": user.username, "ip": remote})).await;
     let session = db::create_session(&state.db, user.id, &remote, SESSION_HOURS).await?;
     db::audit(&state.db, &user.username, "login", &remote).await?;
     let secure = if state.config.dev { "" } else { " Secure;" };

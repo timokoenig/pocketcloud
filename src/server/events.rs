@@ -16,7 +16,7 @@ static SSH_FAILED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^Failed (\w+)
 static SSH_CLOSED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^Connection closed by (?:invalid|authenticating) user (\S+) (\S+) port").unwrap());
 static F2B: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[(\S+)\] (Ban|Unban) (\S+)").unwrap());
 static SUDO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*(\S+) : (?:.*?; )?PWD=(\S+) ; USER=(\S+) ; (?:ENV=\S+ ; )?COMMAND=(.*)$").unwrap());
-static OOM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Out of memory: Killed process (\d+) \((.+?)\)").unwrap());
+static OOM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)out of memory: Killed process (\d+) \((.+?)\)").unwrap());
 static AUDIT_FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(\w+)=("[^"]*"|\S+)"#).unwrap());
 
 /// One fact: kind, one-line summary, structured data.
@@ -104,22 +104,33 @@ pub fn audit_fact(line: &str) -> Option<Fact> {
         return None;
     }
     let success = fields.get("success").map(|s| s == "yes").unwrap_or(false);
-    if !success {
-        return None;
-    }
     let exe = fields.get("exe").cloned().unwrap_or_default();
     let uid = fields.get("auid").cloned().unwrap_or_default();
+    if !success {
+        // a refused write to a watched file by anyone is worth a line
+        return match key.as_str() {
+            "identity" | "sudoers" | "sshd" | "ssh_keys" | "firewall" | "wireguard" | "pocketcloud" => {
+                Some(Fact { kind: "audit_denied", summary: format!("write to {key} files refused for {exe} (login uid {uid})"), data: json!({"key": key, "exe": exe, "auid": uid}) })
+            }
+            _ => None,
+        };
+    }
     // the daemon rewrites the firewall, WireGuard and Caddy files itself, unattended (no login uid)
     if exe == "/usr/local/bin/pocketcloud" && uid == "4294967295" {
         return None;
     }
+    let unattended = uid == "4294967295";
     let kind = match key.as_str() {
         "modules" => "audit_module",
         "time" => "audit_time",
+        "setuid_exec" => "audit_setuid",
+        "mounts" => "audit_mount",
+        // package upgrades rewrite units and configs unattended; that is dpkg's job, not a finding
+        "identity" | "sudoers" | "sshd" | "ssh_keys" | "firewall" | "wireguard" | "cron" | "systemd" | "pocketcloud" | "caddy" | "docker" if unattended && (exe == "/usr/bin/dpkg" || exe.starts_with("/usr/bin/dpkg-")) => "audit_write_pkg",
         "identity" | "sudoers" | "sshd" | "ssh_keys" | "firewall" | "wireguard" | "cron" | "systemd" | "pocketcloud" | "caddy" | "docker" => "audit_write",
         _ => return None,
     };
-    let who = if uid == "4294967295" { "unattended".to_string() } else { format!("login uid {uid}") };
+    let who = if unattended { "unattended".to_string() } else { format!("login uid {uid}") };
     Some(Fact { kind, summary: format!("{key} changed by {exe} ({who})"), data: json!({"key": key, "exe": exe, "auid": uid, "comm": fields.get("comm")}) })
 }
 
@@ -141,9 +152,20 @@ async fn store(state: &Shared, source: &str, f: Fact) {
 
 /// `journalctl -o json --follow` from now on; restarted when it ends.
 pub async fn journal_tailer(state: Shared) {
+    let cursor = state.config.data_dir.join("journal.cursor");
     loop {
+        // the cursor file picks up where the last run stopped; without one, start now
+        let mut args = vec!["-o", "json", "--follow", "--no-pager"];
+        let cursor_arg = format!("--cursor-file={}", cursor.display());
+        if cursor.exists() {
+            args.push(&cursor_arg);
+        } else {
+            args.push("-n");
+            args.push("0");
+            args.push(&cursor_arg);
+        }
         let child = Command::new("journalctl")
-            .args(["-o", "json", "--follow", "-n", "0", "--no-pager"])
+            .args(&args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -153,6 +175,7 @@ pub async fn journal_tailer(state: Shared) {
                 let stdout = child.stdout.take().unwrap();
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(l)) = lines.next_line().await {
+                    state.journal_seen.store(chrono::Utc::now().timestamp(), std::sync::atomic::Ordering::Relaxed);
                     if let Ok(v) = serde_json::from_str::<Value>(&l) {
                         if let Some(f) = journal_fact(&v) {
                             store(&state, "journal", f).await;
@@ -191,6 +214,15 @@ pub async fn file_tailer(state: Shared, path: &'static str, source: &'static str
     }
 }
 
+/// The container's configured healthcheck runs as an exec every interval; that is Docker, not a person.
+async fn is_healthcheck(docker: &bollard::Docker, container: &str, cmd: &str) -> bool {
+    let Ok(info) = docker.inspect_container(container, None).await else { return false };
+    let test = info.config.and_then(|c| c.healthcheck).and_then(|h| h.test).unwrap_or_default();
+    // ["CMD", "wget", "--spider", ...] or ["CMD-SHELL", "curl -f ..."]
+    let configured = if test.len() > 1 { test[1..].join(" ") } else { String::new() };
+    !configured.is_empty() && cmd == configured
+}
+
 /// Docker events: containers dying, OOM kills, health changes; by compose project and service.
 pub async fn docker_events(state: Shared) -> Result<()> {
     use bollard::system::EventsOptions;
@@ -207,6 +239,12 @@ pub async fn docker_events(state: Shared) -> Result<()> {
             let app = attrs.get("com.docker.compose.project").cloned().unwrap_or_default();
             let service = attrs.get("com.docker.compose.service").cloned().unwrap_or_default();
             if app.is_empty() {
+                // not a compose project: a container someone started by hand
+                if action == "start" {
+                    let name = attrs.get("name").cloned().unwrap_or_default();
+                    let image = attrs.get("image").cloned().unwrap_or_default();
+                    store(&state, "docker", Fact { kind: "container_foreign", summary: format!("container {name} ({image}) started outside pocketcloud"), data: json!({"name": name, "image": image}) }).await;
+                }
                 continue;
             }
             let fact = match action.as_str() {
@@ -216,6 +254,15 @@ pub async fn docker_events(state: Shared) -> Result<()> {
                         None
                     } else {
                         Some(Fact { kind: "container_died", summary: format!("{app}/{service} exited with code {code}"), data: json!({"app": app, "service": service, "exit_code": code}) })
+                    }
+                }
+                a if a.starts_with("exec_create") => {
+                    let cmd = a.trim_start_matches("exec_create: ").to_string();
+                    let id = ev.actor.as_ref().and_then(|x| x.id.clone()).unwrap_or_default();
+                    if is_healthcheck(&docker, &id, &cmd).await {
+                        None
+                    } else {
+                        Some(Fact { kind: "container_exec", summary: format!("exec in {app}/{service}: {}", cmd.chars().take(120).collect::<String>()), data: json!({"app": app, "service": service}) })
                     }
                 }
                 "oom" => Some(Fact { kind: "container_oom", summary: format!("{app}/{service} ran out of memory"), data: json!({"app": app, "service": service}) }),
@@ -268,7 +315,9 @@ mod tests {
     fn audit_and_falco() {
         let f = audit_fact(r#"type=SYSCALL msg=audit(1.0:1): arch=c00000b7 syscall=35 success=yes exit=0 auid=1000 comm="vi" exe="/usr/bin/vi" key="sshd""#).unwrap();
         assert_eq!((f.kind, f.data["key"].as_str()), ("audit_write", Some("sshd")));
-        assert!(audit_fact(r#"type=SYSCALL msg=audit(1.0:1): success=no auid=1000 exe="/usr/bin/vi" key="sshd""#).is_none());
+        assert_eq!(audit_fact(r#"type=SYSCALL msg=audit(1.0:1): success=no auid=1000 exe="/usr/bin/vi" key="sshd""#).unwrap().kind, "audit_denied");
+        assert!(audit_fact(r#"type=SYSCALL msg=audit(1.0:1): success=no auid=1000 exe="/usr/bin/vi" key="cron""#).is_none());
+        assert_eq!(audit_fact(r#"type=SYSCALL msg=audit(1.0:1): success=yes auid=4294967295 exe="/usr/bin/dpkg" key="systemd""#).unwrap().kind, "audit_write_pkg");
         assert_eq!(audit_fact(r#"type=SYSCALL msg=audit(1.0:1): success=yes auid=0 exe="/usr/bin/kmod" key="modules""#).unwrap().kind, "audit_module");
         assert!(audit_fact(r#"type=SYSCALL msg=audit(1.0:1): success=yes auid=4294967295 exe="/usr/local/bin/pocketcloud" key="firewall""#).is_none());
         assert!(audit_fact(r#"type=SYSCALL msg=audit(1.0:1): success=yes auid=1000 exe="/usr/local/bin/pocketcloud" key="firewall""#).is_some());

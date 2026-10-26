@@ -180,9 +180,6 @@ pub fn linux_target(architecture: &str) -> &'static str {
     }
 }
 
-pub fn release_url(target: &str) -> String {
-    release_asset_url(&format!("pocketcloud-{target}"))
-}
 
 pub fn release_asset_url(asset: &str) -> String {
     format!(
@@ -197,13 +194,30 @@ pub async fn fetch_caddy_binary(local: Option<&Path>, target: &str, dest: &Path)
         std::fs::copy(p, dest).with_context(|| format!("copy {}", p.display()))?;
         return Ok(());
     }
-    let url = release_asset_url(&format!("caddy-{target}"));
+    fetch_release_asset(&format!("caddy-{target}"), dest, "build caddy with scripts/build-caddy.sh and pass --caddy-binary").await
+}
+
+/// Download a release asset and verify it against the `.sha256` file published next to it. Nothing runs on
+/// the server that did not match the sum the release workflow wrote.
+async fn fetch_release_asset(asset: &str, dest: &Path, hint: &str) -> Result<()> {
+    let url = release_asset_url(asset);
     println!("downloading {url}");
     let resp = reqwest::get(&url).await?;
     if !resp.status().is_success() {
-        bail!("download failed ({}); build caddy with scripts/build-caddy.sh and pass --caddy-binary", resp.status());
+        bail!("download failed ({}); {hint}", resp.status());
     }
-    std::fs::write(dest, &resp.bytes().await?)?;
+    let bytes = resp.bytes().await?;
+    let sums = reqwest::get(format!("{url}.sha256")).await?;
+    if !sums.status().is_success() {
+        bail!("no checksum published for {asset}; refusing to install it unverified");
+    }
+    let expected = sums.text().await?.split_whitespace().next().unwrap_or("").to_lowercase();
+    use sha2::Digest;
+    let actual = hex::encode(sha2::Sha256::digest(&bytes));
+    if expected != actual {
+        bail!("checksum mismatch for {asset}: expected {expected}, got {actual}");
+    }
+    std::fs::write(dest, &bytes)?;
     Ok(())
 }
 
@@ -212,13 +226,5 @@ pub async fn fetch_server_binary(local: Option<&Path>, target: &str, dest: &Path
         std::fs::copy(p, dest).with_context(|| format!("copy {}", p.display()))?;
         return Ok(());
     }
-    let url = release_url(target);
-    println!("downloading {url}");
-    let resp = reqwest::get(&url).await?;
-    if !resp.status().is_success() {
-        bail!("download failed ({}); build the linux binary with scripts/build-linux.sh and pass --server-binary", resp.status());
-    }
-    let bytes = resp.bytes().await?;
-    std::fs::write(dest, &bytes)?;
-    Ok(())
+    fetch_release_asset(&format!("pocketcloud-{target}"), dest, "build the linux binary with scripts/build-linux.sh and pass --server-binary").await
 }

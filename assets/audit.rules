@@ -8,6 +8,7 @@
 -w /etc/sudoers.d/ -p wa -k sudoers
 -w /etc/ssh/ -p wa -k sshd
 -w /root/.ssh/ -p wa -k ssh_keys
+-w /home/${SSH_USER}/.ssh/ -p wa -k ssh_keys
 -w /home/ -p wa -k home
 -w /etc/nftables.conf -p wa -k firewall
 -w /etc/wireguard/ -p wa -k wireguard
@@ -21,7 +22,9 @@
 -a always,exit -F arch=b64 -S mount,umount2 -F auid>=1000 -F auid!=-1 -k mounts
 -a always,exit -F arch=b64 -S adjtimex,settimeofday,clock_settime -k time
 -a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=-1 -k priv_exec
+-a always,exit -F arch=b32 -S execve -F euid=0 -F auid>=1000 -F auid!=-1 -k priv_exec
 -a always,exit -F arch=b64 -S execve -C uid!=euid -F euid=0 -k setuid_exec
+-a always,exit -F arch=b32 -S execve -C uid!=euid -F euid=0 -k setuid_exec
 -w /usr/bin/sudo -p x -k sudo
 -w /usr/bin/su -p x -k su
 -w /usr/bin/docker -p x -k docker_exec

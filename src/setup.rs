@@ -204,7 +204,7 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
         None
     };
     let heartbeat: String = Input::with_theme(&theme())
-        .with_prompt("Heartbeat URL of a dead man's switch (healthchecks.io style; empty for none)")
+        .with_prompt("Heartbeat URL of a dead man's switch (healthchecks.io style; the only way to learn the server itself is gone; empty for none)")
         .allow_empty(true)
         .default(String::new())
         .interact_text()?;
@@ -583,6 +583,7 @@ pub fn write_assets(stage: &Path) -> Result<()> {
     std::fs::write(stage.join("hardening/sysctl.conf"), include_str!("../assets/hardening/sysctl.conf"))?;
     std::fs::write(stage.join("hardening/fail2ban.local"), include_str!("../assets/hardening/fail2ban.local"))?;
     std::fs::write(stage.join("hardening/fail2ban-waf.conf"), include_str!("../assets/hardening/fail2ban-waf.conf"))?;
+    std::fs::write(stage.join("hardening/fail2ban-main.local"), include_str!("../assets/hardening/fail2ban-main.local"))?;
     std::fs::write(stage.join("hardening/apt-unattended.conf"), include_str!("../assets/hardening/apt-unattended.conf"))?;
     std::fs::write(stage.join("hardening/journald.conf"), include_str!("../assets/hardening/journald.conf"))?;
     Ok(())

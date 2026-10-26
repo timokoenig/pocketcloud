@@ -30,6 +30,10 @@ const FORBIDDEN_SERVICE_KEYS: &[&str] = &[
     "platform",
     "external_links",
     "links",
+    "volumes_from",
+    "extends",
+    "storage_opt",
+    "ulimits",
 ];
 
 fn key(s: &str) -> Value {
@@ -226,6 +230,25 @@ pub fn render(compose: &str, app: &str, net_index: u32, env_dir: &str) -> Result
     if root.contains_key(key("secrets")) {
         bail!("top-level `secrets` is not supported; use the app's secrets, they arrive as environment variables");
     }
+    // top-level volumes: plain named volumes only. driver_opts can bind any host path, external/name reach
+    // other apps' volumes.
+    if let Some(vols) = root.get(key("volumes")) {
+        let m = vols.as_mapping().ok_or_else(|| anyhow!("`volumes` must be a mapping"))?;
+        for (name, def) in m {
+            let name = name.as_str().unwrap_or_default();
+            if let Some(d) = def.as_mapping() {
+                for (k, val) in d {
+                    match k.as_str().unwrap_or("") {
+                        "driver" if val.as_str() == Some("local") => {}
+                        "labels" => {}
+                        other => bail!("volume `{name}`: `{other}` is not allowed; volumes are plain named volumes of this app"),
+                    }
+                }
+            } else if !def.is_null() {
+                bail!("volume `{name}` must be empty or a mapping");
+            }
+        }
+    }
     if let Some(nets) = root.get(key("networks")) {
         let m = nets.as_mapping().ok_or_else(|| anyhow!("`networks` must be a mapping"))?;
         for (k, _) in m {
@@ -288,12 +311,18 @@ pub fn render(compose: &str, app: &str, net_index: u32, env_dir: &str) -> Result
         if !svc.contains_key(key("restart")) {
             svc.insert(key("restart"), key("unless-stopped"));
         }
-        // no-new-privileges on top of whatever the user set
+        // security_opt may only add no-new-privileges; seccomp/apparmor/systempaths=unconfined would remove protection
         let mut sec: Vec<Value> = svc
             .get(key("security_opt"))
             .and_then(|v| v.as_sequence())
             .cloned()
             .unwrap_or_default();
+        for s in &sec {
+            let s = s.as_str().unwrap_or("");
+            if !s.starts_with("no-new-privileges") {
+                bail!("service `{name}`: security_opt `{s}` is not allowed");
+            }
+        }
         if !sec.iter().any(|v| v.as_str().map(|s| s.starts_with("no-new-privileges")).unwrap_or(false)) {
             sec.push(key("no-new-privileges:true"));
         }
@@ -407,6 +436,20 @@ fn check_volume(v: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_sandbox_escapes() {
+        let bind_root = "services:\n  a:\n    image: x\n    volumes: [root:/host]\nvolumes:\n  root:\n    driver: local\n    driver_opts: {type: none, o: bind, device: /}\n";
+        assert!(render(bind_root, "a", 1, "/run/pocketcloud/env").is_err());
+        let external = "services:\n  a:\n    image: x\nvolumes:\n  db:\n    external: true\n    name: other_db\n";
+        assert!(render(external, "a", 1, "/run/pocketcloud/env").is_err());
+        let seccomp = "services:\n  a:\n    image: x\n    security_opt: ['seccomp=unconfined']\n";
+        assert!(render(seccomp, "a", 1, "/run/pocketcloud/env").is_err());
+        let vfrom = "services:\n  a:\n    image: x\n    volumes_from: ['container:abc']\n";
+        assert!(render(vfrom, "a", 1, "/run/pocketcloud/env").is_err());
+        let fine = "services:\n  a:\n    image: x\n    volumes: [data:/data]\n    security_opt: ['no-new-privileges:true']\nvolumes:\n  data: {}\n";
+        assert!(render(fine, "a", 1, "/run/pocketcloud/env").is_ok());
+    }
 
     #[test]
     fn inspects() {

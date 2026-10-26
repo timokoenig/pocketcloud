@@ -259,6 +259,8 @@ pub async fn pending_updates() -> Result<Vec<String>> {
 }
 
 /// AIDE report written by the daily timer (assets/pocketcloud-aide.service).
+/// The AIDE report: the summary block comes first, the per-file detail can run to hundreds of lines; the page
+/// shows head and tail, the counts and exit code are parsed from the whole file.
 pub fn aide_report() -> (String, String) {
     let path = Path::new("/var/log/pocketcloud/aide.log");
     let content = std::fs::read_to_string(path).unwrap_or_else(|_| "no AIDE report yet".into());
@@ -266,8 +268,41 @@ pub fn aide_report() -> (String, String) {
         .and_then(|m| m.modified())
         .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
         .unwrap_or_default();
-    let tail: Vec<&str> = content.lines().rev().take(60).collect();
-    (tail.into_iter().rev().collect::<Vec<_>>().join("\n"), checked)
+    let lines: Vec<&str> = content.lines().collect();
+    let shown = if lines.len() > 80 {
+        let mut v: Vec<&str> = lines[..40].to_vec();
+        v.push("[...]");
+        v.extend_from_slice(&lines[lines.len() - 40..]);
+        v.join("\n")
+    } else {
+        content.clone()
+    };
+    (shown, checked)
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AideState {
+    pub added: u64,
+    pub removed: u64,
+    pub changed: u64,
+    pub exit_code: Option<i32>,
+    pub age_hours: Option<f64>,
+    pub ran: bool,
+    /// the report predates the current baseline (re-initialised after an installer run); findings are moot
+    pub outdated: bool,
+}
+
+/// Counts and exit code from the full report file; the unit appends "exit N at <time>" as the last line.
+pub fn aide_state() -> AideState {
+    let path = Path::new("/var/log/pocketcloud/aide.log");
+    let Ok(content) = std::fs::read_to_string(path) else { return AideState::default() };
+    let find = |label: &str| content.lines().find(|l| l.trim_start().starts_with(label) && l.contains(':')).and_then(|l| l.rsplit(':').next()).and_then(|n| n.trim().parse::<u64>().ok()).unwrap_or(0);
+    let exit_code = content.lines().rev().find(|l| l.starts_with("exit ")).and_then(|l| l.split_whitespace().nth(1)).and_then(|n| n.parse().ok());
+    let age_hours = std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs_f64() / 3600.0);
+    let report_time = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let baseline_time = std::fs::metadata("/var/lib/aide/aide.db").and_then(|m| m.modified()).ok();
+    let outdated = matches!((report_time, baseline_time), (Some(r), Some(b)) if b > r);
+    AideState { added: find("Added entries"), removed: find("Removed entries"), changed: find("Changed entries"), exit_code, age_hours, ran: true, outdated }
 }
 
 /// The installed Caddy lists `http.handlers.waf` when it was built with coraza-caddy.
@@ -329,7 +364,7 @@ pub async fn fail2ban_status() -> Vec<JailStatus> {
     let mut out = Vec::new();
     for jail in ["sshd", "pocketcloud-waf"] {
         let Ok(text) = run("fail2ban-client", &["status", jail]).await else { continue };
-        let field = |k: &str| text.lines().find(|l| l.contains(k)).and_then(|l| l.split(':').nth(1)).map(|v| v.trim().to_string()).unwrap_or_default();
+        let field = |k: &str| text.lines().find(|l| l.contains(k)).and_then(|l| l.split_once(':')).map(|(_, v)| v.trim().to_string()).unwrap_or_default();
         let banned: Vec<String> = field("Banned IP list").split_whitespace().map(str::to_string).collect();
         out.push(JailStatus { jail: jail.to_string(), banned, total: field("Total banned") });
     }

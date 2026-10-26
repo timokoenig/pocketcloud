@@ -2,7 +2,8 @@
 
 ## Perimeter
 
-Three things are reachable from the internet: Caddy on 80/443, WireGuard on its UDP port, and ICMP. SSH is reachable
+Three things are reachable from the internet: Caddy on 80/443, WireGuard on its UDP port, and ICMP. The daemon
+alerts on any other listening socket (Postfix, which AIDE's package brings along, is confined to loopback). SSH is reachable
 only through the tunnel; the cloud firewall additionally drops it before it reaches the host, except while setup or
 rescue opens it for one address. The interface is a route on the WireGuard listener only. The name resolves publicly
 through the wildcard, but the public listener has no route for it and, with `strict_sni_host`, no certificate match
@@ -20,6 +21,10 @@ SAMEORIGIN` unless switched off for the route. Clients that trip the WAF ten tim
 the firewall for an hour by fail2ban, as are ssh brute-force attempts. The public listener writes JSON access
 logs to the journal (visitor addresses included; the journal keeps at most 1 GB). A CAA record limits certificate
 issuance for each domain to Let's Encrypt.
+
+Compose files are validated: no host paths, no top-level volume `driver_opts`/`external`/`name`, no
+`volumes_from`, `extends`, `privileged`, capabilities, devices, host namespaces, sysctls, and `security_opt`
+may only add `no-new-privileges`. Every container gets `no-new-privileges` and its own network.
 
 Inside the tunnel, scope `web` devices reach `10.8.0.1:443` and DNS; `full` devices also SSH and the app networks.
 Both are enforced in nftables on the server, not just in the client's allowed IPs.
@@ -85,6 +90,6 @@ WireGuard) under systemd confinement: no new privileges, protected home, kernel 
 
 ## Known gaps in v1
 
-No backups. No two-factor login beyond the VPN. No signature verification of the binary the installer uploads
+No two-factor login beyond the VPN (failed logins are rate-limited per address and alerted). No signature verification of the binary the installer uploads
 (you build it, or it comes from the GitHub release you chose). Caddy runs as root to bind the WireGuard address
 and read the certificate files. The daemon does not rotate the master key yet.

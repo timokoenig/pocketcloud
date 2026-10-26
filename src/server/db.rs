@@ -706,6 +706,10 @@ pub async fn audit_entries(db: &Db, limit: i64) -> Result<Vec<AuditEntry>> {
 }
 
 
+pub async fn failed_jobs_since(db: &Db, since: &str) -> Result<Vec<Job>> {
+    Ok(sqlx::query_as("SELECT * FROM jobs WHERE status = 'failed' AND finished >= ? ORDER BY id DESC").bind(since).fetch_all(db).await?)
+}
+
 // ---- events, metrics, alerts (monitoring) ----
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
@@ -745,8 +749,16 @@ pub async fn events(db: &Db, kind: &str, q: &str, limit: i64) -> Result<Vec<Even
     .await?)
 }
 
+pub async fn events_after(db: &Db, id: i64, limit: i64) -> Result<Vec<Event>> {
+    Ok(sqlx::query_as("SELECT * FROM events WHERE id > ? ORDER BY id LIMIT ?").bind(id).bind(limit).fetch_all(db).await?)
+}
+
 pub async fn events_since(db: &Db, kind: &str, since: &str) -> Result<Vec<Event>> {
     Ok(sqlx::query_as("SELECT * FROM events WHERE kind = ? AND ts >= ? ORDER BY id").bind(kind).bind(since).fetch_all(db).await?)
+}
+
+pub async fn event_kinds_since(db: &Db, since: &str) -> Result<Vec<(String, i64)>> {
+    Ok(sqlx::query_as("SELECT kind, count(*) FROM events WHERE ts >= ? GROUP BY kind ORDER BY kind").bind(since).fetch_all(db).await?)
 }
 
 pub async fn event_kinds(db: &Db) -> Result<Vec<(String, i64)>> {
