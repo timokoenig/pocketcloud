@@ -124,6 +124,14 @@ The snapshot list on the pages is refreshed after each backup and by the button.
 Note: the server holds credentials that can delete snapshots, since it prunes them. Keep that in mind when
 choosing the bucket's project.
 
+## What lives on your laptop
+
+`~/.config/pocketcloud/<name>/`: `install.toml` (ids and names, no secrets), the ssh key pair, the first device's
+tunnel config `pocketcloud-<name>.conf`, `known_hosts` and the Hetzner tokens. The server config copy that setup
+uses between its steps is deleted when setup completes. The CLI (`rescue`, `upgrade`, `dns`, `backup password`) needs this directory; the interface
+does not. Back the directory up into your password manager; everything in it can be recreated, see
+troubleshooting.md "Every device is gone". The recovery phrase is the one thing that cannot.
+
 ## DNS
 
 Certificates renew inside the daemon, which also runs the challenge nameserver; *Renew now* on the server page

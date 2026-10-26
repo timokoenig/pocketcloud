@@ -83,6 +83,14 @@ pub enum ServerCommand {
     NotifyTest,
     /// Request new certificates now and wait (same job the interface starts)
     Renew,
+    /// Add a VPN device and print its WireGuard config (and a QR code): the way back in when every device is lost
+    VpnAdd {
+        /// Device name
+        name: String,
+        /// full (everything) or web (interface and internal routes only)
+        #[arg(long, default_value = "full")]
+        scope: String,
+    },
 }
 
 #[derive(Args)]

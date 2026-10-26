@@ -124,6 +124,22 @@ something there refuses. Check the WireGuard app first. If the tunnel is up and 
 range is excluded from bans since 2026-10-26, and the CLI checks reachability with a real ssh login rather than
 a bare TCP connect, which the aggressive sshd jail can count as a failure.
 
+## Every device is gone: no laptop, no phone, no tunnel config
+
+Nothing on your devices is irreplaceable except the recovery phrase in your password manager. The way back:
+
+1. In the Hetzner console, boot the server into the rescue system and add your new ssh public key to
+   `/home/<ssh user>/.ssh/authorized_keys` on the mounted disk (the user is in `install.toml`, `admin` by default);
+   reboot normally. Add a firewall rule for port 22 from your current address in the console as well.
+2. `ssh admin@<server>` and run `sudo pocketcloud server vpn-add laptop`. It prints a WireGuard config and a
+   QR code. Import it, connect, remove the port 22 rule again.
+3. The interface works as before. Recreate the laptop state for the CLI (`rescue`, `upgrade`, `dns`) by
+   copying `~/.config/pocketcloud/<name>/` from your backup, or create new Hetzner tokens in the console and
+   write a minimal `install.toml` (name, server id, firewall id, domains, ssh user) by hand.
+
+Back up `~/.config/pocketcloud/<name>/` into your password manager after setup: it is a few kilobytes and
+contains the ssh key, the tunnel config and the tokens. All of it can be recreated, but that is the slow way.
+
 ## Locked out: no tunnel, no public SSH
 
 ```sh

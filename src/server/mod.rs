@@ -47,6 +47,41 @@ pub async fn run(args: ServerArgs) -> Result<()> {
             let id = jobs::spawn(&state, "restore", Some(a.id), redact, move |s, log| backup::restore_app(s, app_id, snapshot, log)).await?;
             wait_for_job(&state, id).await
         }
+        ServerCommand::VpnAdd { name, scope } => {
+            let state = build_state(config).await?;
+            let name = name.trim().to_string();
+            if name.is_empty() || name.len() > 32 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                anyhow::bail!("device names: letters, digits, dashes, underscores");
+            }
+            let scope = crate::wireguard::Scope::parse(&scope)?;
+            let used: Vec<std::net::Ipv4Addr> = db::vpn_peers(&state.db).await?.iter().filter_map(|p| p.ip.parse().ok()).collect();
+            let ip = crate::wireguard::next_ip(scope, &used)?;
+            let keys = crate::wireguard::generate_keypair();
+            let psk = crate::wireguard::generate_psk();
+            db::add_vpn_peer(&state.db, &name, &keys.public, &state.key.seal(psk.as_bytes()), &ip.to_string(), scope.as_str()).await?;
+            db::audit(&state.db, "server-cli", "vpn.add", &format!("{name} {} {ip}", scope.as_str())).await?;
+            let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("VPN device {name} added from the server shell ({}, {ip})", scope.as_str()), &serde_json::json!({"action": "vpn.add", "user": "server-cli"})).await;
+            // the running daemon picks the peer up on its next reconcile (within ten minutes); apply it now too
+            if let Err(e) = reconcile::apply(&state).await {
+                tracing::warn!("apply: {e:#}; the daemon applies the peer within ten minutes");
+            }
+            let endpoint = state.public_ips.read().await.iter().find(|i| !i.contains(':')).cloned().unwrap_or_default();
+            let hub_pub = crate::wireguard::public_key_of(&state.config.vpn.hub_private_key)?;
+            let conf = crate::wireguard::client_config(&crate::wireguard::ClientConfig {
+                private_key: &keys.private,
+                ip,
+                hub_public_key: &hub_pub,
+                psk: &psk,
+                endpoint_host: &endpoint,
+                endpoint_port: state.config.vpn.port,
+                scope,
+                apps_cidr: crate::firewall::APPS_CIDR,
+            });
+            println!("# save as pocketcloud-{}-{name}.conf and import it into WireGuard, or scan the code
+{conf}", state.config.name);
+            println!("{}", crate::wireguard::qr(&conf)?);
+            Ok(())
+        }
         ServerCommand::Renew => {
             // issued by the daemon (it runs the challenge nameserver); this only asks and waits
             let db = db::open(&config.db_path()).await?;
@@ -248,9 +283,14 @@ async fn daemon(config: Config) -> Result<()> {
         });
     }
 
-    if let Err(e) = reconcile::apply(&state).await {
-        tracing::error!("initial reconcile: {e:#}");
-        let _ = db::kv_set(&state.db, "reconcile.last_error", &format!("{e:#}")).await;
+    match reconcile::apply(&state).await {
+        Ok(()) => {
+            let _ = db::kv_set(&state.db, "reconcile.last_error", "").await;
+        }
+        Err(e) => {
+            tracing::error!("initial reconcile: {e:#}");
+            let _ = db::kv_set(&state.db, "reconcile.last_error", &format!("{e:#}")).await;
+        }
     }
 
     // the web interface

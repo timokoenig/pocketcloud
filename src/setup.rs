@@ -113,6 +113,8 @@ pub async fn run(args: SetupArgs) -> Result<()> {
         lock_down(&inst, &hetzner).await?;
         inst.step = Step::Done;
         inst.save()?;
+        // the server config copy (hub key, login hash, seeds) only served the install; it is on the server now
+        let _ = std::fs::remove_file(inst.dir()?.join("server-config.toml"));
     }
     summary(&inst)?;
     Ok(())
