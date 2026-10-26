@@ -112,6 +112,12 @@ const SCHEMA: &[&str] = &[
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     )"#,
+    r#"CREATE TABLE IF NOT EXISTS ssh_keys (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        public_key TEXT NOT NULL,
+        created TEXT NOT NULL
+    )"#,
     r#"CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY,
         ts TEXT NOT NULL,
@@ -185,6 +191,10 @@ pub struct User {
     pub id: i64,
     pub username: String,
     pub password_hash: String,
+}
+
+pub async fn users(db: &Db) -> Result<Vec<User>> {
+    Ok(sqlx::query_as("SELECT id, username, password_hash FROM users ORDER BY id").fetch_all(db).await?)
 }
 
 pub async fn user_by_name(db: &Db, username: &str) -> Result<Option<User>> {
@@ -827,4 +837,29 @@ pub async fn purge_monitoring(db: &Db, events_before: &str, metrics_before: &str
     sqlx::query("DELETE FROM metrics WHERE ts < ?").bind(metrics_before).execute(db).await?;
     sqlx::query("DELETE FROM alerts WHERE resolved IS NOT NULL AND resolved < ?").bind(alerts_before).execute(db).await?;
     Ok(())
+}
+
+// ---- ssh keys managed from the interface ----
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SshKey {
+    pub id: i64,
+    pub name: String,
+    pub public_key: String,
+    pub created: String,
+}
+
+pub async fn ssh_keys(db: &Db) -> Result<Vec<SshKey>> {
+    Ok(sqlx::query_as("SELECT * FROM ssh_keys ORDER BY name").fetch_all(db).await?)
+}
+
+pub async fn add_ssh_key(db: &Db, name: &str, public_key: &str) -> Result<()> {
+    sqlx::query("INSERT INTO ssh_keys (name, public_key, created) VALUES (?, ?, ?)").bind(name).bind(public_key).bind(now()).execute(db).await?;
+    Ok(())
+}
+
+pub async fn delete_ssh_key(db: &Db, id: i64) -> Result<Option<String>> {
+    let name: Option<String> = sqlx::query_scalar("SELECT name FROM ssh_keys WHERE id = ?").bind(id).fetch_optional(db).await?;
+    sqlx::query("DELETE FROM ssh_keys WHERE id = ?").bind(id).execute(db).await?;
+    Ok(name)
 }

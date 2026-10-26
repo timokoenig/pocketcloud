@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::cli::{SetupArgs, VpnArgs};
+use crate::cli::SetupArgs;
 use crate::crypto::{self, MasterKey};
 use crate::hetzner::{FirewallRule, Hetzner};
 use crate::install::{self, Installation, Step};
@@ -110,13 +110,40 @@ pub async fn run(args: SetupArgs) -> Result<()> {
         inst.save()?;
     }
     if inst.step == Step::VpnVerified {
+        hand_over(&inst).await?;
         lock_down(&inst, &hetzner).await?;
         inst.step = Step::Done;
         inst.save()?;
-        // the server config copy (hub key, login hash, seeds) only served the install; it is on the server now
-        let _ = std::fs::remove_file(inst.dir()?.join("server-config.toml"));
     }
-    summary(&inst)?;
+    let conf_path = summary(&inst)?;
+    // nothing of the server stays on this machine: the tokens, the installer's ssh key, the state
+    let _ = std::fs::remove_dir_all(inst.dir()?);
+    println!("  Removed {} ; this computer holds nothing of the server now.", inst.dir()?.display());
+    let _ = conf_path;
+    Ok(())
+}
+
+/// The last things that need ssh: the first device's config into the current directory, a phone by QR if
+/// wanted, then ssh is handed to the interface and the installer's key stops working.
+async fn hand_over(inst: &Installation) -> Result<()> {
+    step("Hand-over");
+    let ssh = Ssh::for_installation(inst, &wireguard::HUB_IP.to_string())?;
+    let conf = std::fs::read_to_string(inst.vpn_config_path()?)?;
+    let out = std::env::current_dir()?.join(format!("pocketcloud-{}.conf", inst.name));
+    install::write_private(&out, &conf)?;
+    ok(&format!("tunnel config of this device written to {}", out.display()));
+    println!("  Import it into WireGuard now, then delete the file. Or scan it:\n{}", wireguard::qr(&conf)?);
+    if Confirm::with_theme(&theme()).with_prompt("Add a phone as a second device now? (a QR code to scan)").default(true).interact()? {
+        let device: String = Input::with_theme(&theme()).with_prompt("Name of the phone").default("phone".into()).interact_text()?;
+        let device = device.trim().to_string();
+        if !device.is_empty() && device.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            ssh.run_live(&format!("sudo pocketcloud server vpn-add {device} --scope full")).await?;
+            ok(&format!("device {device} added; scan the code above with the WireGuard app"));
+        }
+    }
+    // from here on only keys added in the interface may log in; the installer's key is gone with this command
+    ssh.run("sudo pocketcloud server ssh-finish").await?;
+    ok("ssh handed over to the interface; the installer's key no longer works");
     Ok(())
 }
 
@@ -271,6 +298,7 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
         name: &inst.name,
         domains: &domains,
         interface_host: &interface_host,
+        ssh_user: &ssh_user,
         vpn_port,
         hub_private_key: &hub.private,
         device: &device,
@@ -308,6 +336,7 @@ struct ServerConfigInput<'a> {
     name: &'a str,
     domains: &'a [String],
     interface_host: &'a str,
+    ssh_user: &'a str,
     vpn_port: u16,
     hub_private_key: &'a str,
     device: &'a str,
@@ -328,6 +357,7 @@ fn render_server_config(c: &ServerConfigInput) -> String {
 name = {name:?}
 domains = [{domains}]
 interface_host = {interface_host:?}
+ssh_user = {ssh_user:?}
 
 [vpn]
 port = {vpn_port}
@@ -350,6 +380,7 @@ password_hash = {password_hash:?}
 "#,
         name = c.name,
         interface_host = c.interface_host,
+        ssh_user = c.ssh_user,
         vpn_port = c.vpn_port,
         hub_private_key = c.hub_private_key,
         device = c.device,
@@ -373,6 +404,7 @@ mod tests {
             name: "demo",
             domains: &["example.com".into(), "staging.example.com".into()],
             interface_host: "pocketcloud.example.com",
+            ssh_user: "admin",
             vpn_port: 51820,
             hub_private_key: "k=",
             device: "mac",
@@ -530,23 +562,7 @@ async fn install_server(inst: &Installation, secrets: &Secrets, key: &MasterKey,
 }
 
 pub fn write_assets(stage: &Path) -> Result<()> {
-    std::fs::create_dir_all(stage.join("units"))?;
-    std::fs::write(stage.join("install.sh"), include_str!("../assets/install.sh"))?;
-    std::fs::write(stage.join("units/pocketcloud.service"), include_str!("../assets/units/pocketcloud.service"))?;
-    std::fs::write(stage.join("units/pocketcloud-aide.service"), include_str!("../assets/units/pocketcloud-aide.service"))?;
-    std::fs::write(stage.join("units/pocketcloud-aide.timer"), include_str!("../assets/units/pocketcloud-aide.timer"))?;
-    std::fs::write(stage.join("audit.rules"), include_str!("../assets/audit.rules"))?;
-    std::fs::write(stage.join("aide.conf"), include_str!("../assets/aide.conf"))?;
-    std::fs::write(stage.join("logrotate"), include_str!("../assets/logrotate"))?;
-    std::fs::create_dir_all(stage.join("hardening"))?;
-    std::fs::write(stage.join("hardening/sshd.conf"), include_str!("../assets/hardening/sshd.conf"))?;
-    std::fs::write(stage.join("hardening/sysctl.conf"), include_str!("../assets/hardening/sysctl.conf"))?;
-    std::fs::write(stage.join("hardening/fail2ban.local"), include_str!("../assets/hardening/fail2ban.local"))?;
-    std::fs::write(stage.join("hardening/fail2ban-waf.conf"), include_str!("../assets/hardening/fail2ban-waf.conf"))?;
-    std::fs::write(stage.join("hardening/fail2ban-main.local"), include_str!("../assets/hardening/fail2ban-main.local"))?;
-    std::fs::write(stage.join("hardening/apt-unattended.conf"), include_str!("../assets/hardening/apt-unattended.conf"))?;
-    std::fs::write(stage.join("hardening/journald.conf"), include_str!("../assets/hardening/journald.conf"))?;
-    Ok(())
+    crate::release::write_assets(stage)
 }
 
 pub fn tempdir(inst: &Installation, what: &str) -> Result<std::path::PathBuf> {
@@ -588,14 +604,13 @@ async fn lock_down(inst: &Installation, hetzner: &Hetzner) -> Result<()> {
     Ok(())
 }
 
-fn summary(inst: &Installation) -> Result<()> {
+fn summary(inst: &Installation) -> Result<std::path::PathBuf> {
     step("Done");
     println!("  interface   {}  (with the VPN active; the certificate may take a few minutes)", inst.interface_url());
-    println!("  ssh         ssh -i {} {}@{}", inst.ssh_key_path()?.display(), inst.server.ssh_user, wireguard::HUB_IP);
-    println!("  files       {}", inst.dir()?.display());
-    println!("  rescue      pocketcloud rescue {} status", inst.name);
-    println!("\n  Keep the recovery phrase and this directory safe; both are needed to get back in.");
-    Ok(())
+    println!("  manage      apps, backups, alerts, ssh keys, upgrades and devices in the interface");
+    println!("  recovery    lost every device: Hetzner rescue system, then `pocketcloud recover` with the 24 words");
+    println!("\n  The recovery phrase is the only thing to keep. Store it now if you have not.");
+    Ok(std::env::current_dir()?.join(format!("pocketcloud-{}.conf", inst.name)))
 }
 
 fn hostname() -> Option<String> {
@@ -608,13 +623,3 @@ fn hostname() -> Option<String> {
         .map(|s| s.to_lowercase())
 }
 
-pub async fn vpn(args: VpnArgs) -> Result<()> {
-    let inst = Installation::load(&args.name)?;
-    let conf = std::fs::read_to_string(inst.vpn_config_path()?)?;
-    if args.qr {
-        println!("{}", wireguard::qr(&conf)?);
-    } else {
-        print!("{conf}");
-    }
-    Ok(())
-}

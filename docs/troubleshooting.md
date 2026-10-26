@@ -1,8 +1,8 @@
 # Troubleshooting
 
-Start with `pocketcloud rescue <name> status`. It shows Hetzner's view of the server, whether public SSH is open in
-the cloud firewall, what answers on the public and the VPN address, and the state of the services when the tunnel
-works. Public SSH is closed after setup; `pocketcloud rescue <name> open-ssh` opens it for your current address.
+Start with the interface if the tunnel works: the dashboard, the Alerts and Events pages and the server page say
+what is going on. Without the tunnel, the Hetzner console shows whether the server runs, and its rescue system is
+the way in (see "Every device is gone"). ssh works over the VPN with a key added on the server page.
 
 ## The tunnel connects, but the interface name does not resolve
 
@@ -26,19 +26,18 @@ No restart is needed. The tunnel's DNS (`10.8.0.1`) then answers internal names 
 
 The handshake does not complete, so the server side is not accepting the peer.
 
-- `pocketcloud rescue <name> status`: is the server running, is `wg-quick@wg0` active?
-- With public SSH open (`open-ssh`), on the server: `sudo wg show` must list your device's public key and
+- Is the server running (Hetzner console)? Over ssh, if you have a key: `sudo wg show` must list your device's public key and
   `sudo journalctl -u pocketcloud -n 50`. If the log shows the daemon retrying something at startup, it never got
   as far as writing `/etc/wireguard/wg0.conf`; fix the cause (usually a config value or an API change) and
   `sudo systemctl restart pocketcloud`.
 - The cloud firewall must allow the WireGuard UDP port; `status` prints the rule count, four rules without SSH.
-- Your device's config must carry the server's public address as endpoint. `pocketcloud vpn <name>` prints it.
+- Your device's config must carry the server's public address as endpoint.
 
 ## While the tunnel is up, nothing on the Mac resolves
 
 The tunnel's config sets `DNS = 10.8.0.1`. When the tunnel is active but the server's resolver is down (daemon not
 running, or the previous problem), the Mac has no working DNS at all; even `brew` and `podman pull` fail. Deactivate
-the tunnel while you fix the server, or use `pocketcloud rescue` which only needs the Hetzner API.
+the tunnel while you fix the server, or use the Hetzner console.
 
 ## Browser warns about the certificate
 
@@ -76,10 +75,10 @@ The daemon runs in a systemd sandbox that, among other things, forbids creating 
 versions before 2026-10-25 ran apt inside that sandbox, so dpkg failed as soon as it touched `su` or `sudo`, and
 left the package database half done. Newer versions start apt as a transient unit outside the sandbox.
 
-1. Install the current build: `pocketcloud upgrade <name> --server-binary dist/pocketcloud-<arch>-unknown-linux-musl`.
+1. Install the current build: *Upgrade* on the server page.
 2. Run *Server → Upgrade* again. It finishes the interrupted dpkg step first, then installs the rest.
 
-To repair by hand instead: `pocketcloud rescue <name> ssh`, then `sudo dpkg --configure -a` and
+To repair by hand instead: ssh in with a key from the server page, then `sudo dpkg --configure -a` and
 `sudo apt-get -f install`.
 
 ## Certificates are not renewed, the log says the challenge nameserver did not answer
@@ -87,7 +86,7 @@ To repair by hand instead: `pocketcloud rescue <name> ssh`, then `sudo dpkg --co
 Let's Encrypt asks `_acme-challenge.<domain>`, which must be delegated to the server. Check from anywhere:
 `dig NS _acme-challenge.<domain>` must return `acme-ns.<domain>`, `dig A acme-ns.<domain>` the server's address,
 and while an order is open `dig TXT _acme-challenge.<domain>` the challenge values. If the first two are wrong,
-run `pocketcloud dns <name>` on your laptop. Port 53 must be open on the public address (the firewall rule is
+fix the records in the Hetzner console (setup writes them; a rebuild rewrites them). Port 53 must be open on the public address (the firewall rule is
 "acme challenge nameserver").
 
 ## A request to an app gets a 403 it should not
@@ -99,8 +98,8 @@ rule flags (raw SQL in a form, large JSON bodies over 13 MB, unusual headers).
 ## The server page says the WAF is unavailable
 
 The installed Caddy is the stock package without the Coraza module; public routes run without the WAF.
-`pocketcloud upgrade <name>` installs the bundled build. For a local build: `scripts/build-caddy.sh` and
-`--caddy-binary dist/caddy-<arch>-unknown-linux-musl`.
+*Upgrade* on the server page installs the bundled build. For a local build: `scripts/build-caddy.sh` and the
+upload field on the server page, or `scripts/push-dev.sh <target> caddy`.
 
 ## An app cannot reach the internet
 
@@ -126,27 +125,20 @@ a bare TCP connect, which the aggressive sshd jail can count as a failure.
 
 ## Every device is gone: no laptop, no phone, no tunnel config
 
-Nothing on your devices is irreplaceable except the recovery phrase in your password manager. The way back:
+Nothing on your devices is irreplaceable; the recovery phrase is. The way back:
 
-1. In the Hetzner console, boot the server into the rescue system and add your new ssh public key to
-   `/home/<ssh user>/.ssh/authorized_keys` on the mounted disk (the user is in `install.toml`, `admin` by default);
-   reboot normally. Add a firewall rule for port 22 from your current address in the console as well.
-2. `ssh admin@<server>` and run `sudo pocketcloud server vpn-add laptop`. It prints a WireGuard config and a
-   QR code. Import it, connect, remove the port 22 rule again.
-3. The interface works as before. Recreate the laptop state for the CLI (`rescue`, `upgrade`, `dns`) by
-   copying `~/.config/pocketcloud/<name>/` from your backup, or create new Hetzner tokens in the console and
-   write a minimal `install.toml` (name, server id, firewall id, domains, ssh user) by hand.
+1. In the Hetzner console, enable the rescue system for the server and reboot into it (the console shows the
+   root password or uses your console ssh key). Mount the disk: `mount /dev/sda1 /mnt`.
+2. Get the binary: it is on the disk, `/mnt/usr/local/bin/pocketcloud`. Run
+   `/mnt/usr/local/bin/pocketcloud recover --root /mnt`. It asks for the 24 words and refuses anything else, then
+   creates a new VPN device and prints its config and a QR code, and offers to reset the interface password.
+3. `umount /mnt`, disable the rescue system in the console, reboot. Once pocketcloud has started, the new device
+   connects and the interface is back.
 
-Back up `~/.config/pocketcloud/<name>/` into your password manager after setup: it is a few kilobytes and
-contains the ssh key, the tunnel config and the tokens. All of it can be recreated, but that is the slow way.
+Console access alone is not enough on purpose: without the phrase, `recover` does nothing.
 
-## Locked out: no tunnel, no public SSH
+## Locked out: no tunnel, no ssh
 
-```sh
-pocketcloud rescue <name> open-ssh      # port 22 for your current address, in the cloud firewall
-pocketcloud rescue <name> ssh
-pocketcloud rescue <name> close-ssh     # afterwards
-```
-
-If the server does not react at all, `pocketcloud rescue <name> reboot` or the Hetzner console. The daemon brings
-WireGuard, the firewall, Caddy and every app back on its own after a boot.
+Another device of yours still has the tunnel: use it, add a replacement device on the VPN page. No device at
+all: "Every device is gone" above. If the server does not react at all, reboot it in the Hetzner console; the
+daemon brings apps, tunnel and firewall back on its own.

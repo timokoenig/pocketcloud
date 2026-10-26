@@ -11,6 +11,9 @@ pub struct Config {
     pub domains: Vec<String>,
     /// Host name of the interface, pocketcloud.<first domain> by default
     pub interface_host: String,
+    /// The login whose authorized_keys the daemon manages from the interface
+    #[serde(default = "default_ssh_user")]
+    pub ssh_user: String,
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
     #[serde(default = "default_key_file")]
@@ -40,6 +43,9 @@ fn default_data_dir() -> PathBuf {
 }
 fn default_key_file() -> PathBuf {
     "/etc/pocketcloud/master.key".into()
+}
+fn default_ssh_user() -> String {
+    "admin".into()
 }
 fn default_listen() -> String {
     "127.0.0.1:7788".into()

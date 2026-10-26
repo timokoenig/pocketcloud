@@ -35,13 +35,13 @@ reach each other or the host's services except through routes.
 
 ## Hetzner tokens
 
-The server holds no Hetzner credential. Both tokens, cloud and DNS, stay on the laptop in
-`~/.config/pocketcloud/<name>/`. Certificates still use the DNS-01 challenge, but the challenge name is delegated
+The server holds no Hetzner credential, and neither does your computer after setup: the tokens are used during
+the install and then forgotten. Certificates still use the DNS-01 challenge, but the challenge name is delegated
 to the server: setup writes `_acme-challenge.<domain> NS acme-ns.<domain>` and `acme-ns.<domain> A/AAAA <server>`
 into the real zone once, and the daemon answers `_acme-challenge.<domain>` TXT queries itself on port 53 (rate
 limited, every other name refused). A root compromise can therefore forge certificates for the domain, which it
 already holds, and nothing else: MX, A and every other record of the real zone are out of reach. The A, AAAA
-and CAA records are written by setup and `pocketcloud dns <name>`.
+and CAA records are written by setup.
 
 ## Detection
 
@@ -67,7 +67,9 @@ server config (root only) and can delete snapshots; a bucket in a project of its
 - The interface never returns a secret value after it was saved.
 - Hetzner tokens and the WireGuard hub key live in `/etc/pocketcloud/config.toml`, root only. A root compromise of
   the host exposes everything the host needs to run; encryption at rest is not a defense against that.
-- The local directory `~/.config/pocketcloud/<name>/` holds the Hetzner tokens, the SSH key and the first device's
+- After setup nothing of the server is on your computer; the roots of trust are the recovery phrase, your
+  VPN devices with the interface password, and the Hetzner account login (rescue mode). Put two-factor
+  authentication on the Hetzner account. (The former local directory
   WireGuard key in plain files with mode 0600. Protect your machine accordingly; FileVault is assumed.
 
 ## Workloads

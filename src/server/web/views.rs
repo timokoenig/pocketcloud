@@ -338,6 +338,16 @@ pub struct ServerPage {
     pub snapshots: Vec<crate::server::backup::Snapshot>,
     pub backup_form: BackupForm,
     pub falco_on: bool,
+    pub ssh_keys: Vec<SshKeyView>,
+    pub ssh_managed: bool,
+    pub ssh_user: String,
+}
+
+pub struct SshKeyView {
+    pub id: i64,
+    pub name: String,
+    pub fingerprint: String,
+    pub created: String,
 }
 
 pub struct BackupForm {

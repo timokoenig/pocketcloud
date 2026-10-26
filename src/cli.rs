@@ -17,19 +17,16 @@ pub enum Command {
     Setup(SetupArgs),
     /// Run the daemon on the server
     Server(ServerArgs),
-    /// Reach a server when the interface or VPN is down
-    Rescue(RescueArgs),
-    /// Upload a new binary to the server and restart the daemon
-    Upgrade(UpgradeArgs),
-    /// Print the WireGuard config of the device created during setup
-    Vpn(VpnArgs),
-    /// Derive the restic password from the recovery phrase, for a restore without pocketcloud
-    Backup(BackupArgs),
-    /// (Re)write the public DNS records of an installation from this machine, e.g. after a rebuild
-    Dns(DnsArgs),
+    /// From Hetzner's rescue system: prove the recovery phrase, add a VPN device, optionally reset the password
+    Recover(RecoverArgs),
+    /// The restic password of an installation from its recovery phrase, for a restore with plain restic
+    ResticPassword,
     /// Print the argon2 hash of a password (for config files)
     #[command(hide = true)]
     HashPassword { password: String },
+    /// Print the recovery phrase of a master key given as hex (testing)
+    #[command(hide = true)]
+    KeyPhrase { hex: String },
     /// Render a compose file the way the server would (debugging)
     #[command(hide = true)]
     RenderCompose {
@@ -83,6 +80,17 @@ pub enum ServerCommand {
     NotifyTest,
     /// Request new certificates now and wait (same job the interface starts)
     Renew,
+    /// Upgrade pocketcloud and Caddy to a release (the newest by default) or from staged binaries
+    Upgrade {
+        /// Release version, e.g. 0.2.0; empty for the newest
+        #[arg(long, default_value = "")]
+        version: String,
+        /// Use binaries from this directory (pocketcloud, caddy) instead of downloading
+        #[arg(long)]
+        from_dir: Option<PathBuf>,
+    },
+    /// Hand ssh over to the interface: from now on authorized_keys holds only the keys added there
+    SshFinish,
     /// Add a VPN device and print its WireGuard config (and a QR code): the way back in when every device is lost
     VpnAdd {
         /// Device name
@@ -94,69 +102,9 @@ pub enum ServerCommand {
 }
 
 #[derive(Args)]
-pub struct RescueArgs {
-    /// Name of the installation
-    pub name: String,
-    #[command(subcommand)]
-    pub command: RescueCommand,
+pub struct RecoverArgs {
+    /// Where the server's disk is mounted
+    #[arg(long, default_value = "/mnt")]
+    pub root: String,
 }
 
-#[derive(Subcommand)]
-pub enum RescueCommand {
-    /// Server status from the Hetzner API and reachability checks
-    Status,
-    /// Allow SSH from your current public IP in the cloud firewall
-    OpenSsh,
-    /// Remove the public SSH rule from the cloud firewall
-    CloseSsh,
-    /// Reboot the server through the Hetzner API
-    Reboot,
-    /// Open an SSH session (through the VPN if up, otherwise after open-ssh)
-    Ssh,
-    /// Restore the master key on the server from the recovery phrase
-    RestoreKey,
-}
-
-#[derive(Args)]
-pub struct UpgradeArgs {
-    /// Name of the installation
-    pub name: String,
-    /// Linux binary to upload instead of downloading the release
-    #[arg(long)]
-    pub server_binary: Option<PathBuf>,
-    /// Caddy binary (built with Coraza, scripts/build-caddy.sh) instead of downloading the release
-    #[arg(long)]
-    pub caddy_binary: Option<PathBuf>,
-    /// Keep the Caddy that is installed
-    #[arg(long)]
-    pub skip_caddy: bool,
-}
-
-#[derive(Args)]
-pub struct BackupArgs {
-    /// Name of the installation
-    pub name: String,
-    #[command(subcommand)]
-    pub command: BackupCommand,
-}
-
-#[derive(Subcommand)]
-pub enum BackupCommand {
-    /// Print the restic password derived from the recovery phrase, for restores without pocketcloud
-    Password,
-}
-
-#[derive(Args)]
-pub struct DnsArgs {
-    /// Name of the installation
-    pub name: String,
-}
-
-#[derive(Args)]
-pub struct VpnArgs {
-    /// Name of the installation
-    pub name: String,
-    /// Show as QR code
-    #[arg(long)]
-    pub qr: bool,
-}

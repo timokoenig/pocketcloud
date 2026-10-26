@@ -14,6 +14,7 @@ pub mod notify;
 pub mod reconcile;
 pub mod state;
 pub mod system;
+pub mod upgrade;
 pub mod web;
 
 use anyhow::{Context, Result};
@@ -80,6 +81,31 @@ pub async fn run(args: ServerArgs) -> Result<()> {
             println!("# save as pocketcloud-{}-{name}.conf and import it into WireGuard, or scan the code
 {conf}", state.config.name);
             println!("{}", crate::wireguard::qr(&conf)?);
+            Ok(())
+        }
+        ServerCommand::Upgrade { version, from_dir } => {
+            let state = build_state(config).await?;
+            let id = jobs::spawn(&state, "upgrade", None, vec![], move |s, log| async move {
+                match from_dir {
+                    Some(dir) => {
+                        let mut lines = Vec::new();
+                        upgrade::stage_from_dir(&dir, &mut lines)?;
+                        for l in lines {
+                            log.line(l).await;
+                        }
+                        upgrade::run_installer(&log).await
+                    }
+                    None => upgrade::upgrade_job(s, version, log).await,
+                }
+            })
+            .await?;
+            wait_for_job(&state, id).await
+        }
+        ServerCommand::SshFinish => {
+            let state = build_state(config).await?;
+            db::kv_set(&state.db, "ssh.managed", "1").await?;
+            system::write_authorized_keys(&state).await?;
+            println!("ssh handed over to the interface: {} key(s) authorized", db::ssh_keys(&state.db).await?.len());
             Ok(())
         }
         ServerCommand::Renew => {
@@ -226,7 +252,9 @@ async fn refresh_public_ips(state: &Shared) -> Result<()> {
         *state.public_ips.write().await = vec!["127.0.0.1".into()];
         return Ok(());
     }
-    *state.public_ips.write().await = system::local_public_ips().await?;
+    let ips = system::local_public_ips().await?;
+    let _ = db::kv_set(&state.db, "host.public_ips", &ips.join(",")).await;
+    *state.public_ips.write().await = ips;
     Ok(())
 }
 

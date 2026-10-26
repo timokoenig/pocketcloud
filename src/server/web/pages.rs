@@ -504,6 +504,9 @@ pub async fn server(State(state): State<Shared>, user: User, Query(f): Query<Fla
             }
         },
         falco_on: crate::server::system::falco_wanted(&state).await,
+        ssh_keys: db::ssh_keys(&state.db).await?.into_iter().map(|k| views::SshKeyView { id: k.id, name: k.name, fingerprint: k.public_key.split_whitespace().nth(1).map(|b| format!("{}…", b.chars().take(20).collect::<String>())).unwrap_or_default(), created: views::short_time(&k.created) }).collect(),
+        ssh_managed: db::kv_get(&state.db, "ssh.managed").await?.as_deref() == Some("1"),
+        ssh_user: state.config.ssh_user.clone(),
         newer_release: host.latest_version.clone(),
         host,
         uptime,
@@ -612,6 +615,129 @@ pub async fn set_falco(State(state): State<Shared>, user: User, Form(f): Form<On
         let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} switched Falco off", user.username), &serde_json::json!({"user": user.username, "action": "monitor.falco"})).await;
     }
     Ok(back("/server", Some(if on { "Falco switched on" } else { "Falco switched off" }), None))
+}
+
+#[derive(Deserialize)]
+pub struct UpgradeForm {
+    #[serde(default)]
+    version: String,
+}
+
+/// Download a release (the newest, or the given version) and let the installer replace the daemon.
+pub async fn upgrade_pocketcloud(State(state): State<Shared>, user: User, Form(f): Form<UpgradeForm>) -> R {
+    let version = f.version.trim().trim_start_matches('v').to_string();
+    if !version.is_empty() && !version.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return Ok(back("/server", None, Some("a version looks like 0.2.0")));
+    }
+    db::audit(&state.db, &user.username, "server.upgrade_pocketcloud", &version).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} started a pocketcloud upgrade to {}", user.username, if version.is_empty() { "the newest release" } else { &version }), &serde_json::json!({"user": user.username, "action": "upgrade"})).await;
+    match jobs::spawn(&state, "upgrade", None, vec![], move |s, log| crate::server::upgrade::upgrade_job(s, version, log)).await {
+        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
+        Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
+    }
+}
+
+/// A build uploaded from the interface (development): the pocketcloud binary, optionally Caddy.
+pub async fn upload_build(State(state): State<Shared>, user: User, mut multipart: axum::extract::Multipart) -> R {
+    let dir = state.config.data_dir.join("upload");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir)?;
+    let mut got = Vec::new();
+    while let Some(field) = multipart.next_field().await.map_err(|e| anyhow::anyhow!("upload: {e}"))? {
+        let name = field.name().unwrap_or("").to_string();
+        if name != "pocketcloud" && name != "caddy" {
+            continue;
+        }
+        let data = field.bytes().await.map_err(|e| anyhow::anyhow!("upload: {e}"))?;
+        if data.len() < 1_000_000 {
+            continue; // an empty file input
+        }
+        std::fs::write(dir.join(&name), &data)?;
+        got.push(format!("{name} ({} MB)", data.len() / 1_000_000));
+    }
+    if got.is_empty() {
+        return Ok(back("/server", None, Some("no binary uploaded")));
+    }
+    db::audit(&state.db, &user.username, "server.upload_build", &got.join(", ")).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} installed an uploaded build: {}", user.username, got.join(", ")), &serde_json::json!({"user": user.username, "action": "upload_build"})).await;
+    match jobs::spawn(&state, "upgrade", None, vec![], move |_s, log| async move {
+        let mut lines = Vec::new();
+        crate::server::upgrade::stage_from_dir(&dir, &mut lines)?;
+        for l in lines {
+            log.line(l).await;
+        }
+        crate::server::upgrade::run_installer(&log).await
+    })
+    .await
+    {
+        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
+        Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SshKeyForm {
+    name: String,
+    public_key: String,
+}
+
+pub async fn add_ssh_key(State(state): State<Shared>, user: User, Form(f): Form<SshKeyForm>) -> R {
+    let name = f.name.trim().to_string();
+    let key = f.public_key.trim().to_string();
+    if name.is_empty() || name.len() > 32 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Ok(back("/server", None, Some("key names: letters, digits, dashes, underscores")));
+    }
+    let parts: Vec<&str> = key.split_whitespace().collect();
+    let valid_type = parts.first().map(|t| matches!(*t, "ssh-ed25519" | "ssh-rsa" | "ecdsa-sha2-nistp256" | "ecdsa-sha2-nistp384" | "sk-ssh-ed25519@openssh.com")).unwrap_or(false);
+    use base64::Engine;
+    let valid_body = parts.get(1).map(|b| base64::engine::general_purpose::STANDARD.decode(b).is_ok()).unwrap_or(false);
+    if !valid_type || !valid_body || key.contains('\n') {
+        return Ok(back("/server", None, Some("that is not an ssh public key (ssh-ed25519 AAAA... name)")));
+    }
+    let key = format!("{} {}", parts[0], parts[1]);
+    if let Err(e) = db::add_ssh_key(&state.db, &name, &key).await {
+        return Ok(back("/server", None, Some(&format!("not added: {e}"))));
+    }
+    db::audit(&state.db, &user.username, "ssh.add", &name).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} added ssh key {name}", user.username), &serde_json::json!({"user": user.username, "action": "ssh.add"})).await;
+    if db::kv_get(&state.db, "ssh.managed").await?.as_deref() != Some("1") {
+        db::kv_set(&state.db, "ssh.managed", "1").await?;
+    }
+    system::write_authorized_keys(&state).await?;
+    Ok(back("/server", Some(&format!("ssh key {name} authorized")), None))
+}
+
+pub async fn delete_ssh_key(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
+    let name = db::delete_ssh_key(&state.db, id).await?.unwrap_or_default();
+    db::audit(&state.db, &user.username, "ssh.delete", &name).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} removed ssh key {name}", user.username), &serde_json::json!({"user": user.username, "action": "ssh.delete"})).await;
+    system::write_authorized_keys(&state).await?;
+    Ok(back("/server", Some(&format!("ssh key {name} removed")), None))
+}
+
+#[derive(Deserialize)]
+pub struct PasswordForm {
+    current: String,
+    new: String,
+    repeat: String,
+}
+
+pub async fn change_password(State(state): State<Shared>, user: User, Form(f): Form<PasswordForm>) -> R {
+    let u = db::user_by_name(&state.db, &user.username).await?.ok_or_else(|| anyhow::anyhow!("user vanished"))?;
+    if !crate::crypto::verify_password(&f.current, &u.password_hash) {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        return Ok(back("/server", None, Some("the current password is wrong")));
+    }
+    if f.new.chars().count() < 12 {
+        return Ok(back("/server", None, Some("the new password needs at least 12 characters")));
+    }
+    if f.new != f.repeat {
+        return Ok(back("/server", None, Some("the two new passwords differ")));
+    }
+    db::set_password(&state.db, &user.username, &crate::crypto::hash_password(&f.new)?).await?;
+    db::audit(&state.db, &user.username, "account.password", "").await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} changed the interface password", user.username), &serde_json::json!({"user": user.username, "action": "password"})).await;
+    Ok(back("/server", Some("password changed"), None))
 }
 
 pub async fn backup_now(State(state): State<Shared>, user: User) -> R {

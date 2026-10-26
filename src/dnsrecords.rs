@@ -3,9 +3,7 @@
 //! itself (NS acme-ns.<domain> with glue), so no DNS token ever lives on the server.
 use anyhow::{bail, Context, Result};
 
-use crate::cli::DnsArgs;
 use crate::hetzner::{relative_name, Hetzner};
-use crate::install::Installation;
 
 /// Write every record of every domain; returns one line per record for the console.
 pub async fn apply(dns: &Hetzner, domains: &[String], ipv4: Option<&str>, ipv6: Option<&str>) -> Result<Vec<String>> {
@@ -38,26 +36,4 @@ pub async fn apply(dns: &Hetzner, domains: &[String], ipv4: Option<&str>, ipv6: 
         }
     }
     Ok(lines)
-}
-
-/// `pocketcloud dns <name>`: (re)write the records, for example after a rebuild changed the address.
-pub async fn run(args: DnsArgs) -> Result<()> {
-    let inst = Installation::load(&args.name)?;
-    let token = std::fs::read_to_string(inst.dir()?.join("hetzner-dns.token")).context("hetzner-dns.token")?.trim().to_string();
-    let dns = Hetzner::new(&token);
-    let lines = apply(&dns, &inst.domains, inst.server.ipv4.as_deref(), inst.server.ipv6.as_deref()).await?;
-    for l in lines {
-        println!("  {l}");
-    }
-    println!("records written; the server answers _acme-challenge itself, certificates need no token on it");
-
-    // the cloud firewall must let port 53 through; an ssh rule left open by rescue is kept
-    if let (Ok(cloud_token), Some(fw)) = (std::fs::read_to_string(inst.hetzner_token_path()?), inst.hetzner.firewall_id) {
-        let cloud = Hetzner::new(cloud_token.trim());
-        let current = cloud.firewall(fw).await?;
-        let ssh_from: Option<String> = current.rules.iter().find(|r| r.port.as_deref() == Some("22")).and_then(|r| r.source_ips.first()).map(|s| s.trim_end_matches("/32").to_string());
-        cloud.set_firewall_rules(fw, &crate::setup::firewall_rules(inst.vpn.port, ssh_from.as_deref())).await?;
-        println!("cloud firewall updated: 80, 443, {}/udp, 53, icmp{}", inst.vpn.port, if ssh_from.is_some() { ", ssh kept open" } else { "" });
-    }
-    Ok(())
 }

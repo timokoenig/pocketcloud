@@ -71,6 +71,7 @@ pub async fn apply(state: &Shared) -> Result<()> {
     system::apply_wireguard(&conf).await.context("apply wireguard")?;
 
     caddy::push(&cfg).await.context("push caddy config")?;
+    system::write_authorized_keys(state).await.context("authorized_keys")?;
     Ok(())
 }
 

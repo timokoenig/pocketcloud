@@ -306,6 +306,34 @@ pub fn aide_state() -> AideState {
     AideState { added: find("Added entries"), removed: find("Removed entries"), changed: find("Changed entries"), exit_code, age_hours, ran: true, outdated }
 }
 
+/// `authorized_keys` of the ssh user from the database, once the installer handed ssh over (kv ssh.managed).
+/// With no keys the file is empty: nobody can log in.
+pub async fn write_authorized_keys(state: &super::state::Shared) -> anyhow::Result<()> {
+    if state.config.dev || super::db::kv_get(&state.db, "ssh.managed").await?.as_deref() != Some("1") {
+        return Ok(());
+    }
+    let user = &state.config.ssh_user;
+    let dir = Path::new("/home").join(user).join(".ssh");
+    let keys = super::db::ssh_keys(&state.db).await?;
+    let mut content = String::from("# managed by pocketcloud: add keys in the interface, not here\n");
+    for k in &keys {
+        content += &format!("{} {}\n", k.public_key.trim(), k.name);
+    }
+    let path = dir.join("authorized_keys");
+    let current = std::fs::read_to_string(&path).unwrap_or_default();
+    if current == content {
+        return Ok(());
+    }
+    std::fs::create_dir_all(&dir)?;
+    let tmp = dir.join("authorized_keys.new");
+    std::fs::write(&tmp, &content)?;
+    crate::install::set_mode(&tmp, 0o600)?;
+    run("chown", &["-R", &format!("{user}:{user}"), &dir.display().to_string()]).await?;
+    std::fs::rename(&tmp, &path)?;
+    tracing::info!("authorized_keys written: {} key(s)", keys.len());
+    Ok(())
+}
+
 /// Falco on or off, from the database; on by default.
 pub async fn falco_wanted(state: &super::state::Shared) -> bool {
     super::db::kv_get(&state.db, "monitor.falco").await.ok().flatten().as_deref() != Some("0")

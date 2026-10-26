@@ -89,6 +89,52 @@
   </details>
 </div>
 
+<h2>Pocketcloud</h2>
+<div class="card">
+  <p>Running {{ base.version }}{% if !newer_release.is_empty() %} · <span class="tag err">release {{ newer_release }} available</span>{% endif %}</p>
+  <div class="row">
+    <form method="post" action="/server/upgrade-pocketcloud" class="inline row" data-confirm="Download the release, verify it and restart pocketcloud? Apps keep running."><input name="version" placeholder="newest" class="short"><button class="primary">Upgrade</button></form>
+  </div>
+  <p class="muted small">The daemon downloads the release from GitHub, verifies the published checksums, runs the installer and restarts; the interface is back within a minute, apps are not touched.</p>
+  <details>
+    <summary>Install an uploaded build (development)</summary>
+    <form method="post" action="/server/upload-build" enctype="multipart/form-data" class="row" data-confirm="Install the uploaded build and restart pocketcloud?">
+      <label>pocketcloud binary <input type="file" name="pocketcloud" required></label>
+      <label>caddy binary (optional) <input type="file" name="caddy"></label>
+      <button>Install</button>
+    </form>
+  </details>
+</div>
+
+<h2>SSH keys</h2>
+<div class="card">
+  <p class="muted small">Keys that may log in as <code>{{ ssh_user }}</code> over the VPN. {% if ssh_managed %}Only the keys below are authorized.{% else %}The installer's key is still authorized until the first key is added here or setup finishes.{% endif %}</p>
+  <table class="compact">
+    <tbody>
+    {% for k in ssh_keys %}
+    <tr><td><code>{{ k.name }}</code></td><td class="small muted">{{ k.fingerprint }}</td><td class="small muted">{{ k.created }}</td><td><form method="post" action="/server/ssh-keys/{{ k.id }}/delete" class="inline" data-confirm="Remove ssh key {{ k.name }}?"><button class="link danger">remove</button></form></td></tr>
+    {% endfor %}
+    <tr>
+      <form method="post" action="/server/ssh-keys" autocomplete="off">
+      <td><input name="name" placeholder="laptop" required class="short"></td>
+      <td colspan="2"><input name="public_key" placeholder="ssh-ed25519 AAAA..." required class="wide" autocomplete="off" spellcheck="false"></td>
+      <td><button>Add</button></td>
+      </form>
+    </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Account</h2>
+<div class="card">
+  <form method="post" action="/account/password" class="row" autocomplete="off">
+    <label>Current password <input name="current" type="password" required autocomplete="current-password"></label>
+    <label>New password <input name="new" type="password" required minlength="12" autocomplete="new-password"></label>
+    <label>Repeat <input name="repeat" type="password" required autocomplete="new-password"></label>
+    <button>Change password</button>
+  </form>
+</div>
+
 <h2>Runtime detection</h2>
 <div class="card">
   <form method="post" action="/server/falco" class="row">

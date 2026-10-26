@@ -1,4 +1,5 @@
-//! Local state of an installation: ~/.config/pocketcloud/<name>/
+//! State of a running setup, kept only until it finishes: ~/.cache/pocketcloud/install-<name>/. A failed run
+//! continues from it; a successful one deletes it, so nothing of the server remains on this machine.
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -61,14 +62,15 @@ pub struct Vpn {
 
 pub fn root_dir() -> Result<PathBuf> {
     let dirs = directories::BaseDirs::new().ok_or_else(|| anyhow!("no home directory"))?;
-    Ok(dirs.home_dir().join(".config").join("pocketcloud"))
+    Ok(dirs.home_dir().join(".cache").join("pocketcloud"))
 }
 
+/// The run directory of a setup: removed when the setup completes.
 pub fn dir(name: &str) -> Result<PathBuf> {
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(anyhow!("installation name must be alphanumeric with dashes"));
     }
-    Ok(root_dir()?.join(name))
+    Ok(root_dir()?.join(format!("install-{name}")))
 }
 
 pub fn ensure_dir(name: &str) -> Result<PathBuf> {

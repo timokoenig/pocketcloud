@@ -6,7 +6,7 @@ Devices are managed under *VPN*. Creating one shows the WireGuard config and a Q
 key is generated on the server and not stored. Revoking a device closes its tunnel immediately. The last device
 cannot be removed from the interface.
 
-The device from setup has its config in `~/.config/pocketcloud/<name>/`; `pocketcloud vpn <name> --qr` shows it.
+The device from setup got its config at the end of setup; further devices come from the VPN page as files or QR codes.
 
 While the tunnel is active all DNS of the device goes through the server, which answers internal names with
 `10.8.0.1` and forwards everything else to Hetzner's resolvers.
@@ -14,11 +14,11 @@ While the tunnel is active all DNS of the device goes through the server, which 
 ## SSH
 
 ```sh
-ssh -i ~/.config/pocketcloud/<name>/id_ed25519 admin@10.8.0.1
+ssh admin@10.8.0.1
 ```
 
-with the tunnel active. `pocketcloud rescue <name> ssh` does the same and falls back to the public address when
-public SSH has been opened with `open-ssh`.
+with the tunnel active and a key you added under *SSH keys* on the server page. Without any key there, nobody
+can log in, which is the state right after setup.
 
 ## Monitoring and alerts
 
@@ -70,8 +70,9 @@ switch on the server page starts or stops its service within a minute. It costs 
 
 ## What an upgrade applies
 
-`pocketcloud upgrade <name>` uploads the new daemon, the Caddy build and every file under `assets/`, then runs the
-installer again. The installer is idempotent and owns all server configuration: host hardening (sshd, sysctl,
+*Upgrade* on the server page downloads the release (newest, or a version you type), verifies the published
+checksums, runs the installer again and restarts the daemon; `sudo pocketcloud server upgrade` does the same from
+a shell, `--from-dir` with binaries you put there. The installer The installer is idempotent and owns all server configuration: host hardening (sshd, sysctl,
 fail2ban, unattended-upgrades, journald), Docker's daemon.json, Caddy's unit and binary, auditd rules, the AIDE
 configuration, logrotate and the systemd units. Files are replaced when they differ; sshd changes are validated
 with `sshd -t` and rolled back if invalid. The daemon then migrates the database schema and regenerates nftables,
@@ -101,7 +102,7 @@ spurious "Access Denied"; restic calls are retried three times for that.
 Restore by hand, from any machine with restic:
 
 ```
-pocketcloud backup <name> password        # asks for the recovery phrase, prints RESTIC_* exports
+pocketcloud restic-password               # asks for the recovery phrase, prints RESTIC_PASSWORD
 export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
 restic snapshots
 restic restore latest --target /tmp/restore --include /var/lib/docker/volumes/<volume>
@@ -126,20 +127,16 @@ choosing the bucket's project.
 
 ## What lives on your laptop
 
-`~/.config/pocketcloud/<name>/`: `install.toml` (ids and names, no secrets), the ssh key pair, the first device's
-tunnel config `pocketcloud-<name>.conf`, `known_hosts` and the Hetzner tokens. The server config copy that setup
-uses between its steps is deleted when setup completes. The CLI (`rescue`, `upgrade`, `dns`, `backup password`) needs this directory; the interface
-does not. Back the directory up into your password manager; everything in it can be recreated, see
-troubleshooting.md "Every device is gone". The recovery phrase is the one thing that cannot.
+Nothing. Setup deletes its run directory when it completes. The CLI on your computer is only needed to set up a
+server or, from Hetzner's rescue system, to recover one. Keep the recovery phrase.
 
 ## DNS
 
 Certificates renew inside the daemon, which also runs the challenge nameserver; *Renew now* on the server page
 and `sudo pocketcloud server renew` only ask it to.
 
-The real zone is only ever written from your laptop: by setup, and by `pocketcloud dns <name>` after a rebuild
-changed the address. The server answers `_acme-challenge.<domain>` itself for certificate renewals and holds no
-DNS token.
+The real zone is written once, by setup. The server answers `_acme-challenge.<domain>` itself for certificate
+renewals and holds no DNS token. A rebuilt server gets its records from the setup that builds it.
 
 ## Updates
 
@@ -150,10 +147,8 @@ DNS token.
 - *Server → Check* lists all pending packages, *Upgrade* installs them. The upgrade runs as a transient
   systemd unit (`pocketcloud-apt-<time>`) outside the daemon's sandbox; a failed run can be retried, it finishes the
   interrupted dpkg step first.
-- Pocketcloud itself: `pocketcloud upgrade <name> --server-binary dist/pocketcloud-<arch>-unknown-linux-musl`
-  uploads the binary and units and restarts the daemon. Running apps are not touched. The upgrade also installs
-  the bundled Caddy build with the WAF (`--caddy-binary dist/caddy-<arch>-unknown-linux-musl` for a local build,
-  `--skip-caddy` to leave Caddy alone).
+- Pocketcloud itself: *Upgrade* on the server page, see "What an upgrade applies". Running apps are not touched.
+  A development build goes in through the upload field on the same page, or `scripts/push-dev.sh`.
 
 ## Certificates
 
@@ -162,14 +157,9 @@ error. *Renew now* forces a new order.
 
 ## When something is wrong
 
-- `pocketcloud rescue <name> status`: Hetzner's view of the server, the cloud firewall, what answers on the public
-  and the VPN address, and the state of the services when the tunnel works.
-- Interface down but SSH over VPN works: `journalctl -u pocketcloud -n 100`, `systemctl restart pocketcloud`.
-- Tunnel down: `pocketcloud rescue <name> open-ssh` opens port 22 for your current address in the cloud firewall,
-  SSH to the public address, fix, `close-ssh`.
-- Server unresponsive: `pocketcloud rescue <name> reboot`, or the Hetzner console.
-- Master key lost (fresh disk, restored image without `/etc/pocketcloud/master.key`):
-  `pocketcloud rescue <name> restore-key` with the recovery phrase.
+- Server unresponsive: reboot it in the Hetzner console. The daemon brings apps, tunnel and firewall back.
+- Every device lost: Hetzner's rescue system and `pocketcloud recover`, see troubleshooting.md.
+- Master key file lost or corrupt: rebuild through setup with the old phrase and restore from the backups.
 
 ## Firewall
 

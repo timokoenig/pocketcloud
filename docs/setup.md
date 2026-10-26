@@ -1,73 +1,50 @@
 # Setup
 
-## Before
+The binary on your computer is an installer. It creates the server, installs Pocketcloud, hands you the recovery
+phrase and the first VPN device, and then deletes everything it used. From then on the server is managed in the
+interface; nothing of it remains on this computer.
 
-- A Hetzner Cloud project with an API token (read & write); it stays on your machine. If the DNS zones live in
-  another project (recommended: the server then only holds a token that cannot touch servers), a token for
-  that one too.
-- The zone of every domain you want to use exists in Hetzner DNS (Cloud Console → DNS). Pocketcloud writes
-  `domain` and `*.domain` records and the ACME challenge records; nothing else in the zone is touched.
-- The WireGuard app on this Mac (and on the phone, if you want it in).
-- `ssh`, `ssh-keygen` and `tar` on this machine; they come with macOS.
-- The Linux binary for the server: `scripts/build-linux.sh` (needs the podman machine running) or a release.
+## What you need
 
-## Running setup
+- A Hetzner Cloud project with an API token (read & write) for the server, and the token of the project that holds
+  the DNS zones if that is a different one. Both are used during setup only and never stored; revoke them
+  afterwards if you like.
+- Your domain as a zone in Hetzner DNS.
+- WireGuard on this computer and on your phone.
+
+## Run it
 
 ```sh
-pocketcloud setup mycloud --server-binary dist/pocketcloud-aarch64-unknown-linux-musl
+pocketcloud setup mycloud
 ```
 
-Pick the binary that matches the server type: `aarch64` for the Arm types (CAX), `x86_64` for the rest.
-
-The wizard, in order:
+Setup asks for the tokens, the server size and location, the domains, the ssh user, the interface login, the first
+device name and the WireGuard port, the Let's Encrypt address, and whether to reuse the recovery phrase of an
+earlier installation (for a rebuild). Then it shows the plan and creates everything.
 
 The cloud firewall lets in 80, 443, the WireGuard port, 53 for the challenge nameserver, and ICMP; ssh only
-while setup or rescue opens it for your address. Setup writes the public DNS records from your laptop (the domain and its wildcard, CAA, and the delegation of
-`_acme-challenge` to the server, which answers the certificate challenge itself); after a rebuild `pocketcloud
-dns <name>` re-points them. Setup only does what needs your laptop: Hetzner, the server, domains, the first VPN device, the login and the
-recovery phrase. Backups, alerts, Falco and apps are configured in the interface afterwards.
+while setup runs, for this computer's address. Setup writes the public DNS records: the domain and its
+wildcard, CAA, and the delegation of `_acme-challenge` to the server, which answers the certificate challenge
+itself and therefore holds no DNS token.
 
-1. **Hetzner** tokens; both are checked immediately.
-2. **Domains**, comma separated, each must have a zone. The interface host defaults to `pocketcloud.<first domain>`
-   and can be anything one label below a domain, but not `admin.`-style names you might want for apps.
-3. **Server**: location and type with the monthly price, SSH user name.
-4. **Interface login**: username and a password of at least 12 characters.
-5. **VPN**: a name for this device and the WireGuard port.
-6. **Certificates**: optional e-mail for Let's Encrypt, and whether to use their staging environment. Staging
-   certificates are not trusted by browsers; use it only to try the whole flow without hitting rate limits.
-7. **Plan** and confirmation.
-8. **Recovery phrase**: 24 words, shown once. You type three of them back. Put them in your password manager.
-9. **Creating resources**: SSH key, firewall (80, 443, the WireGuard port, ICMP, and SSH from your current address),
-   the server with the hardening cloud-init.
-10. **Installing**: waits for SSH and the first boot, uploads the binary, config, master key and units, runs
-    `install.sh` (packages, Docker, Caddy, auditd, AIDE, the daemon). Output is shown live.
-11. **VPN**: shows the client config as a QR code and the path of the file. Import it into WireGuard and activate the
-    tunnel. Setup waits until SSH and the interface answer on `10.8.0.1`.
-12. **Locking down**: removes the SSH rule from the cloud firewall. From now on SSH works only through the tunnel.
+## What you get at the end
 
-Every step saves its result in `~/.config/pocketcloud/mycloud/install.toml`. If something fails, fix the cause and
-run the same command again; it continues at the failed step. If the installer step is repeated in a later run, setup
-asks for the recovery phrase because the master key is never kept on this machine.
+1. **The recovery phrase**, 24 words, shown once and confirmed by three of them. It is the master key that seals
+   every secret and the backups. Store it in your password manager. It is the only thing to keep.
+2. **The first device's tunnel config**, written to `pocketcloud-mycloud.conf` in the current directory and shown
+   as a QR code. Import it into WireGuard and delete the file.
+3. **A phone**, if you say yes: a second device by QR code, so losing one device never locks you out.
 
-## After
+Then setup hands ssh to the interface (the installer's key stops working), closes the firewall, and deletes its
+run directory. The interface is at `https://pocketcloud.<domain>` with the tunnel active.
 
-- `https://pocketcloud.<domain>` with the tunnel active. The first certificate takes a few minutes: the daemon
-  creates the DNS records, waits until the nameservers serve the challenge, and asks Let's Encrypt. Until then the
-  browser shows a TLS error. The server page lists certificate status and errors.
-- Add registry credentials under *Registries* before deploying private images.
-- Add more devices under *VPN*. Scope `web` reaches the interface and internal routes; `full` additionally SSH and
-  the app networks.
+## If setup fails half way
 
-## What is where on the server
+Its state is in `~/.cache/pocketcloud/install-mycloud/` until it succeeds. Fix the cause and run the same command
+again; it continues where it stopped. The run after the first asks for the recovery phrase, because the master
+key only lived in memory.
 
-| path | |
-|---|---|
-| `/etc/pocketcloud/config.toml` | the config setup wrote, root only; tokens, hub key, bootstrap login |
-| `/etc/pocketcloud/master.key` | the master key, root only |
-| `/var/lib/pocketcloud/pocketcloud.db` | SQLite: apps, routes, encrypted secrets, peers, jobs, audit |
-| `/var/lib/pocketcloud/apps/<app>/` | rendered `compose.yaml` and `files/` for the app's own files |
-| `/var/lib/pocketcloud/certs/<domain>/` | `fullchain.pem`, `key.pem` |
-| `/run/pocketcloud/` | env files and docker credentials, tmpfs, root only |
-| `/etc/nftables.conf`, `/etc/wireguard/wg0.conf` | generated by the daemon on every change |
-| `/var/log/pocketcloud/aide.log` | the daily AIDE report |
-| `journalctl -u pocketcloud` | the daemon's log |
+## Afterwards
+
+Apps, backups, alerts, Falco, ssh keys, upgrades and devices are configured in the interface. Lost every device:
+see troubleshooting.md, "Every device is gone".

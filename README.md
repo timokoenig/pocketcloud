@@ -15,8 +15,8 @@ manage compose apps from a web interface that is reachable through WireGuard onl
 - Public routes sit behind a web application firewall (Coraza, OWASP Core Rule Set), switchable per route.
 - Built-in monitoring: journal, auditd, Falco and Docker events plus host metrics, fixed checks, alerts by mail or
   webhook, a heartbeat for a dead man's switch. Nightly restic backups to S3 with restore.
-- **Recovery**: `pocketcloud rescue` talks to the Hetzner API directly, opens SSH for your address, reboots, or puts
-  the master key back from the 24-word recovery phrase.
+- **Recovery**: lost every device? Hetzner's rescue system and `pocketcloud recover` with the 24 words give you a
+  new device and, if needed, a new password. Lost the server? Setup again with the same phrase, then restore.
 
 Scope and decisions: [V1.md](V1.md). Guides: [docs/setup.md](docs/setup.md), [docs/apps.md](docs/apps.md),
 [docs/operations.md](docs/operations.md), [docs/troubleshooting.md](docs/troubleshooting.md), [docs/security.md](docs/security.md).
@@ -26,7 +26,7 @@ Scope and decisions: [V1.md](V1.md). Guides: [docs/setup.md](docs/setup.md), [do
 ```sh
 cargo build --release                      # the local binary (macOS)
 scripts/build-linux.sh                     # the server binaries, in a podman container → dist/
-target/release/pocketcloud setup mycloud --server-binary dist/pocketcloud-aarch64-unknown-linux-musl
+target/release/pocketcloud setup mycloud --server-binary dist/pocketcloud-aarch64-unknown-linux-musl --caddy-binary dist/caddy-aarch64-unknown-linux-musl
 ```
 
 Setup asks for the Hetzner token, domains, server type and the interface login, shows the recovery phrase once,
@@ -40,13 +40,13 @@ Without `--server-binary`, setup downloads the release matching its own version 
 | command | where | what |
 |---|---|---|
 | `pocketcloud setup <name>` | your machine | create and enroll a server; re-run to continue after an interruption |
-| `pocketcloud vpn <name> [--qr]` | your machine | the WireGuard config of the device created during setup |
-| `pocketcloud rescue <name> status\|open-ssh\|close-ssh\|reboot\|ssh\|restore-key` | your machine | when the interface or VPN is down |
-| `pocketcloud upgrade <name> [--server-binary …]` | your machine | new daemon binary and units, daemon restarted |
+| `pocketcloud recover --root /mnt` | Hetzner rescue system | with the 24 words: a new VPN device, optionally a new password |
+| `pocketcloud restic-password` | anywhere | the restic password from the 24 words, for a restore with plain restic |
+| `pocketcloud server upgrade\|backup\|restore\|renew\|vpn-add\|ssh-finish\|notify-test\|passwd` | the server | what the interface does, from a shell |
 | `pocketcloud server [run\|apply\|firewall\|passwd <user>]` | server | the daemon (systemd runs `server`) |
 
-Local state lives in `~/.config/pocketcloud/<name>/`: Hetzner tokens, the SSH key, the first device's WireGuard
-config, the server config. Treat the directory like a password: it is the way back in. The master key is not in it.
+Nothing of the server stays on your computer after setup: the installer deletes its run directory. Keep the
+recovery phrase.
 
 ## Development
 

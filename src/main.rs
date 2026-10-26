@@ -1,4 +1,3 @@
-mod backup_cli;
 mod cli;
 mod cloudinit;
 mod crypto;
@@ -6,11 +5,11 @@ mod dnsrecords;
 mod firewall;
 mod hetzner;
 mod install;
+mod recover;
+mod release;
 mod remote;
-mod rescue;
 mod server;
 mod setup;
-mod upgrade;
 mod wireguard;
 
 use clap::Parser;
@@ -28,11 +27,18 @@ fn main() -> anyhow::Result<()> {
         match args.command {
             cli::Command::Setup(a) => setup::run(a).await,
             cli::Command::Server(a) => server::run(a).await,
-            cli::Command::Rescue(a) => rescue::run(a).await,
-            cli::Command::Upgrade(a) => upgrade::run(a).await,
-            cli::Command::Vpn(a) => setup::vpn(a).await,
-            cli::Command::Backup(a) => backup_cli::run(a).await,
-            cli::Command::Dns(a) => dnsrecords::run(a).await,
+            cli::Command::Recover(a) => recover::run(a).await,
+            cli::Command::ResticPassword => {
+                let phrase: String = dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default()).with_prompt("Recovery phrase (24 words)").interact_text()?;
+                let key = crypto::MasterKey::from_phrase(&phrase)?;
+                println!("export RESTIC_PASSWORD={}", *key.derive("restic"));
+                println!("# plus RESTIC_REPOSITORY=s3:<endpoint>/<bucket>, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY of the bucket; then: restic snapshots");
+                Ok(())
+            }
+            cli::Command::KeyPhrase { hex } => {
+                println!("{}", *crypto::MasterKey::from_hex(&hex)?.phrase());
+                Ok(())
+            }
             cli::Command::HashPassword { password } => {
                 println!("{}", crypto::hash_password(&password)?);
                 Ok(())
