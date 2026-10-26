@@ -170,28 +170,31 @@ pub async fn serve_public(zone: PublicZone, binds: Vec<SocketAddr>) -> Result<()
             }
         }));
         let z = zone.clone();
+        // at most 64 TCP conversations at a time per listener, each over within 5 seconds: a client that
+        // connects and goes quiet costs nothing beyond that
+        let slots = Arc::new(tokio::sync::Semaphore::new(64));
         tasks.push(tokio::spawn(async move {
             loop {
                 let Ok((mut stream, _)) = tcp.accept().await else { continue };
+                let Ok(permit) = slots.clone().try_acquire_owned() else { continue };
                 let z = z.clone();
                 tokio::spawn(async move {
                     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                    let mut len = [0u8; 2];
-                    if tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut len)).await.ok().and_then(|r| r.ok()).is_none() {
-                        return;
-                    }
-                    let n = u16::from_be_bytes(len) as usize;
-                    if n == 0 || n > 4096 {
-                        return;
-                    }
-                    let mut query = vec![0u8; n];
-                    if stream.read_exact(&mut query).await.is_err() {
-                        return;
-                    }
-                    if let Some(resp) = answer_public(&query, &z).await {
-                        let _ = stream.write_all(&(resp.len() as u16).to_be_bytes()).await;
-                        let _ = stream.write_all(&resp).await;
-                    }
+                    let _permit = permit;
+                    let conversation = async {
+                        let mut len = [0u8; 2];
+                        stream.read_exact(&mut len).await.ok()?;
+                        let n = u16::from_be_bytes(len) as usize;
+                        if n == 0 || n > 4096 {
+                            return None;
+                        }
+                        let mut query = vec![0u8; n];
+                        stream.read_exact(&mut query).await.ok()?;
+                        let resp = answer_public(&query, &z).await?;
+                        stream.write_all(&(resp.len() as u16).to_be_bytes()).await.ok()?;
+                        stream.write_all(&resp).await.ok()
+                    };
+                    let _ = tokio::time::timeout(Duration::from_secs(5), conversation).await;
                 });
             }
         }));

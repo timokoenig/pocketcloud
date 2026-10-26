@@ -196,6 +196,39 @@ pub async fn stream_events(state: &Shared) {
     }
 }
 
+/// A host the daemon may be told to connect to (SMTP, webhook, heartbeat, S3): never itself. Loopback would
+/// reach Caddy's admin API or the daemon's own listener; link-local would reach a cloud metadata service.
+pub fn check_remote_host(host: &str) -> Result<()> {
+    let h = host.trim().trim_matches(|c| c == '[' || c == ']').to_ascii_lowercase();
+    if h.is_empty() {
+        anyhow::bail!("no host");
+    }
+    if h == "localhost" || h.ends_with(".localhost") {
+        anyhow::bail!("{host} is this machine");
+    }
+    if let Ok(ip) = h.parse::<std::net::IpAddr>() {
+        let bad = match ip {
+            std::net::IpAddr::V4(a) => a.is_loopback() || a.is_unspecified() || a.is_link_local() || a.is_broadcast(),
+            std::net::IpAddr::V6(a) => a.is_loopback() || a.is_unspecified() || (a.segments()[0] & 0xffc0) == 0xfe80,
+        };
+        if bad {
+            anyhow::bail!("{host} is this machine or a link-local address");
+        }
+    }
+    Ok(())
+}
+
+/// The host part of a URL, for `check_remote_host`.
+pub fn url_host(url: &str) -> Option<String> {
+    let rest = url.split("://").nth(1)?;
+    let authority = rest.split('/').next()?;
+    let hostport = authority.rsplit('@').next()?;
+    if let Some(h) = hostport.strip_prefix('[') {
+        return Some(h.split(']').next()?.to_string());
+    }
+    Some(hostport.split(':').next()?.to_string())
+}
+
 pub fn one_line(text: &str, max: usize) -> String {
     let mut out = String::new();
     let mut space = true;
@@ -221,6 +254,20 @@ pub fn one_line(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_hosts() {
+        assert!(check_remote_host("smtp.example.com").is_ok());
+        assert!(check_remote_host("10.8.0.5").is_ok());
+        assert!(check_remote_host("127.0.0.1").is_err());
+        assert!(check_remote_host("localhost").is_err());
+        assert!(check_remote_host("169.254.169.254").is_err());
+        assert!(check_remote_host("::1").is_err());
+        assert!(check_remote_host("fe80::1").is_err());
+        assert_eq!(url_host("http://127.0.0.1:2019/stop").as_deref(), Some("127.0.0.1"));
+        assert_eq!(url_host("https://user@hc-ping.com/abc").as_deref(), Some("hc-ping.com"));
+        assert_eq!(url_host("http://[::1]:80/x").as_deref(), Some("::1"));
+    }
 
     #[test]
     fn subjects() {

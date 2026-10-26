@@ -131,6 +131,9 @@ pub async fn set_thresholds(State(state): State<Shared>, user: User, Form(t): Fo
     if t.disk_warn > t.disk_crit || t.mem_crit > t.mem_warn {
         return Ok(back("/alerts", None, Some("warning thresholds must come before critical ones")));
     }
+    if [t.disk_warn, t.disk_crit, t.inodes_warn, t.mem_warn, t.mem_crit, t.cpu_warn, t.swap_warn].iter().any(|v| *v < 0.0 || *v > 100.0) || t.ssh_failed == 0 || t.waf_blocks == 0 || t.http_5xx == 0 || t.backup_stale_hours < 1 || t.reboot_days < 0 || t.cert_days < 1 {
+        return Ok(back("/alerts", None, Some("a threshold is out of range")));
+    }
     crate::server::alerts::set_thresholds(&state, &t).await?;
     db::audit(&state.db, &user.username, "alerts.thresholds", &serde_json::to_string(&t).unwrap_or_default()).await?;
     Ok(back("/alerts", Some("thresholds saved"), None))
@@ -175,6 +178,9 @@ pub async fn save_notify(State(state): State<Shared>, user: User, Form(f): Form<
         if !matches!(f.smtp_tls.as_str(), "starttls" | "implicit" | "none") {
             return Ok(back("/alerts", None, Some("TLS must be starttls, implicit or none")));
         }
+        if let Err(e) = crate::server::notify::check_remote_host(f.smtp_host.trim()) {
+            return Ok(back("/alerts", None, Some(&format!("SMTP host: {e}"))));
+        }
         let password = if f.smtp_password.is_empty() { current.email.as_ref().map(|e| e.smtp_password.clone()).unwrap_or_default() } else { f.smtp_password.clone() };
         let e = EmailConfig { to, from: f.from.trim().to_string(), smtp_host: f.smtp_host.trim().to_string(), smtp_port: f.smtp_port.unwrap_or(587), smtp_tls: f.smtp_tls.clone(), smtp_user: f.smtp_user.trim().to_string(), smtp_password: password };
         let bad = crate::server::notify::bad_addresses(&e);
@@ -189,12 +195,20 @@ pub async fn save_notify(State(state): State<Shared>, user: User, Form(f): Form<
         if !f.webhook_url.trim().starts_with("https://") && !f.webhook_url.trim().starts_with("http://") {
             return Ok(back("/alerts", None, Some("the webhook URL must start with http:// or https://")));
         }
+        if let Err(e) = crate::server::notify::check_remote_host(&crate::server::notify::url_host(f.webhook_url.trim()).unwrap_or_default()) {
+            return Ok(back("/alerts", None, Some(&format!("webhook: {e}"))));
+        }
         let token = if f.webhook_token.is_empty() { current.webhook.as_ref().map(|w| w.token.clone()).unwrap_or_default() } else { f.webhook_token.clone() };
         Some(WebhookConfig { url: f.webhook_url.trim().to_string(), token })
     };
     let heartbeat_url = f.heartbeat_url.trim().to_string();
     if !heartbeat_url.is_empty() && !heartbeat_url.starts_with("https://") && !heartbeat_url.starts_with("http://") {
         return Ok(back("/alerts", None, Some("the heartbeat URL must start with http:// or https://")));
+    }
+    if !heartbeat_url.is_empty() {
+        if let Err(e) = crate::server::notify::check_remote_host(&crate::server::notify::url_host(&heartbeat_url).unwrap_or_default()) {
+            return Ok(back("/alerts", None, Some(&format!("heartbeat: {e}"))));
+        }
     }
     let cfg = NotifyConfig { email, webhook, heartbeat_url };
     crate::server::notify::save_settings(&state, &cfg).await?;
@@ -557,6 +571,9 @@ pub async fn save_backup(State(state): State<Shared>, user: User, Form(f): Form<
     }
     if !bucket.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.') {
         return Ok(back("/server", None, Some("the bucket name looks wrong")));
+    }
+    if let Err(e) = crate::server::notify::check_remote_host(&crate::server::notify::url_host(&endpoint).unwrap_or_else(|| endpoint.clone())) {
+        return Ok(back("/server", None, Some(&format!("S3 endpoint: {e}"))));
     }
     let secret_key = if f.secret_key.is_empty() { current.as_ref().map(|c| c.secret_key.clone()).unwrap_or_default() } else { f.secret_key.clone() };
     if secret_key.is_empty() {

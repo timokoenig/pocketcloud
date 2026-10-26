@@ -7,6 +7,8 @@ Wants=network-online.target docker.service
 ExecStart=/usr/local/bin/pocketcloud server
 Restart=always
 RestartSec=3
+# docker streams, sqlite, the resolver and the challenge nameserver all hold descriptors
+LimitNOFILE=65536
 Environment=RUST_LOG=info
 # root: docker socket, nftables, wireguard. Confined where that does not get in the way.
 NoNewPrivileges=yes
