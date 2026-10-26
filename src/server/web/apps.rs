@@ -127,8 +127,8 @@ pub async fn show(State(state): State<Shared>, user: User, Path(id): Path<i64>, 
         env,
         missing,
         hardening,
-        backup_enabled: state.config.backup.is_some(),
-        snapshots: if state.config.backup.is_some() { crate::server::backup::cached_snapshots(&state).await } else { vec![] },
+        backup_enabled: crate::server::backup::settings(&state).await.is_some(),
+        snapshots: if crate::server::backup::settings(&state).await.is_some() { crate::server::backup::cached_snapshots(&state).await } else { vec![] },
     })
 }
 
@@ -142,7 +142,8 @@ pub struct AppRestoreForm {
 pub async fn restore(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<AppRestoreForm>) -> R {
     let app = load_app(&state, id).await?;
     let page = format!("/apps/{id}");
-    if state.config.backup.is_none() {
+    let backup_cfg = crate::server::backup::settings(&state).await;
+    if backup_cfg.is_none() {
         return Ok(back(&page, None, Some("backups are not configured")));
     }
     if f.confirm.trim() != app.name {
@@ -150,7 +151,7 @@ pub async fn restore(State(state): State<Shared>, user: User, Path(id): Path<i64
     }
     db::audit(&state.db, &user.username, "app.restore", &format!("{} {}", app.name, f.snapshot)).await?;
     let mut redact = deploy::secret_values(&state, app.id).await?;
-    redact.extend(state.config.backup.as_ref().map(|b| b.secret_key.clone()));
+    redact.extend(backup_cfg.map(|b| b.secret_key));
     let snap = f.snapshot.trim().to_string();
     let app_id = app.id;
     match jobs::spawn(&state, "restore", Some(app.id), redact, move |s, log| crate::server::backup::restore_app(s, app_id, snap, log)).await {

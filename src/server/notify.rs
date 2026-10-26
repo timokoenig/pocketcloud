@@ -84,9 +84,37 @@ pub fn body(name: &str, interface: &str, changes: &[Change]) -> String {
     out
 }
 
+/// The notification settings: from the database (sealed with the master key, edited on the Alerts page),
+/// seeded from the config file on first start.
+pub async fn settings(state: &super::state::State) -> NotifyConfig {
+    if let Ok(Some(b64)) = db::kv_get(&state.db, "notify.settings").await {
+        use base64::Engine;
+        if let Ok(sealed) = base64::engine::general_purpose::STANDARD.decode(b64) {
+            if let Ok(json) = state.key.open_string(&sealed) {
+                if let Ok(cfg) = serde_json::from_str::<NotifyConfig>(&json) {
+                    return cfg;
+                }
+            }
+        }
+    }
+    state.config.notify.clone()
+}
+
+pub async fn save_settings(state: &super::state::State, cfg: &NotifyConfig) -> Result<()> {
+    use base64::Engine;
+    let sealed = state.key.seal(serde_json::to_string(cfg)?.as_bytes());
+    db::kv_set(&state.db, "notify.settings", &base64::engine::general_purpose::STANDARD.encode(sealed)).await
+}
+
+/// Addresses that do not parse, for validation before saving.
+pub fn bad_addresses(e: &EmailConfig) -> Vec<String> {
+    std::iter::once(&e.from).chain(e.to.iter()).filter(|a| a.parse::<Mailbox>().is_err()).cloned().collect()
+}
+
 /// Deliver one batch to every configured channel; errors are recorded, never fatal. True when every channel took it.
 pub async fn deliver(state: &Shared, changes: &[Change]) -> bool {
-    let cfg: &NotifyConfig = &state.config.notify;
+    let cfg = settings(state).await;
+    let cfg: &NotifyConfig = &cfg;
     let name = &state.config.name;
     let mut errors = Vec::new();
     if let Some(e) = &cfg.email {
@@ -113,7 +141,7 @@ pub async fn deliver(state: &Shared, changes: &[Change]) -> bool {
 /// healthchecks.io style: GET <url>/fail marks the check failed at once, so the dead man's switch carries
 /// the bad news when the daemon cannot deliver its own alerts.
 pub async fn heartbeat_fail(state: &Shared) {
-    let url = &state.config.notify.heartbeat_url;
+    let url = settings(state).await.heartbeat_url;
     if url.is_empty() {
         return;
     }
@@ -125,7 +153,7 @@ pub async fn heartbeat_fail(state: &Shared) {
 /// GET the heartbeat URL; the dead man's switch behind it alerts when the pings stop. Sent only while the
 /// monitoring itself works: checks evaluate, the journal collector sees lines, deliveries are not failing.
 pub async fn heartbeat(state: &Shared) {
-    let url = &state.config.notify.heartbeat_url;
+    let url = settings(state).await.heartbeat_url;
     if url.is_empty() {
         return;
     }
@@ -149,7 +177,8 @@ pub async fn heartbeat(state: &Shared) {
 /// Security events go to the webhook as they are stored (once a minute), so an off-box copy exists even if
 /// the host is later cleaned. Alerts are separate.
 pub async fn stream_events(state: &Shared) {
-    let Some(w) = &state.config.notify.webhook else { return };
+    let cfg = settings(state).await;
+    let Some(w) = &cfg.webhook else { return };
     let last: i64 = db::kv_get(&state.db, "events.streamed_id").await.ok().flatten().and_then(|s| s.parse().ok()).unwrap_or(0);
     let Ok(events) = db::events_after(&state.db, last, 500).await else { return };
     let security: Vec<&db::Event> = events

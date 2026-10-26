@@ -23,7 +23,7 @@ pub enum Command {
     Upgrade(UpgradeArgs),
     /// Print the WireGuard config of the device created during setup
     Vpn(VpnArgs),
-    /// Switch nightly backups on or off, or derive the restic password for a manual restore
+    /// Derive the restic password from the recovery phrase, for a restore without pocketcloud
     Backup(BackupArgs),
     /// Print the argon2 hash of a password (for config files)
     #[command(hide = true)]
@@ -130,10 +130,6 @@ pub struct BackupArgs {
 
 #[derive(Subcommand)]
 pub enum BackupCommand {
-    /// Configure Hetzner Object Storage and start nightly backups
-    Enable,
-    /// Stop backups (snapshots stay in the bucket)
-    Disable,
     /// Print the restic password derived from the recovery phrase, for restores without pocketcloud
     Password,
 }

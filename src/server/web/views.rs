@@ -336,6 +336,16 @@ pub struct ServerPage {
     pub newer_release: String,
     pub backup: BackupView,
     pub snapshots: Vec<crate::server::backup::Snapshot>,
+    pub backup_form: BackupForm,
+    pub falco_on: bool,
+}
+
+pub struct BackupForm {
+    pub s3_endpoint: String,
+    pub bucket: String,
+    pub access_key: String,
+    pub has_secret: bool,
+    pub hour: u8,
 }
 
 pub struct AuditView {
@@ -361,11 +371,25 @@ pub struct AlertsPage {
     pub t: crate::server::alerts::Thresholds,
     pub notify_configured: bool,
     pub channels: String,
+    pub notify: NotifyForm,
     pub notify_last: String,
     pub notify_error: String,
     pub heartbeat: String,
     /// (metric, "min / avg / max")
     pub metrics: Vec<(String, String)>,
+}
+
+pub struct NotifyForm {
+    pub to: String,
+    pub from: String,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_tls: String,
+    pub smtp_user: String,
+    pub has_password: bool,
+    pub webhook_url: String,
+    pub has_webhook_token: bool,
+    pub heartbeat_url: String,
 }
 
 pub struct AlertView {

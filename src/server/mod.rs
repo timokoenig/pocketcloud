@@ -98,12 +98,7 @@ async fn wait_for_job(state: &Shared, id: i64) -> Result<()> {
 
 async fn build_state(config: Config) -> Result<Shared> {
     let waf_available = config.dev || system::caddy_has_waf().await;
-    if let Some(e) = &config.notify.email {
-        let bad: Vec<String> = std::iter::once(&e.from).chain(e.to.iter()).filter(|a| a.parse::<lettre::message::Mailbox>().is_err()).cloned().collect();
-        if !bad.is_empty() {
-            tracing::error!("notify.email: these addresses do not parse: {}", bad.join(", "));
-        }
-    }
+
     if !waf_available {
         tracing::warn!("caddy has no Coraza module; public routes run without the WAF until `pocketcloud upgrade` installs the bundled build");
     }
@@ -170,9 +165,22 @@ async fn refresh_public_ips(state: &Shared) -> Result<()> {
 async fn daemon(config: Config) -> Result<()> {
     let state = build_state(config).await?;
     db::fail_stale_jobs(&state.db).await?;
-    if let Some(e) = &state.config.notify.email {
-        let bad: Vec<String> = std::iter::once(&e.from).chain(e.to.iter()).filter(|a| a.parse::<lettre::message::Mailbox>().is_err()).cloned().collect();
-        let _ = db::kv_set(&state.db, "notify.last_error", &if bad.is_empty() { String::new() } else { format!("email addresses do not parse: {}", bad.join(", ")) }).await;
+    // notification settings: the config file seeds the database once; from then on the Alerts page owns them
+    if db::kv_get(&state.db, "notify.settings").await?.is_none() && (state.config.notify.any() || !state.config.notify.heartbeat_url.is_empty()) {
+        notify::save_settings(&state, &state.config.notify).await?;
+        tracing::info!("notification settings taken from the config file into the database");
+    }
+    if db::kv_get(&state.db, "backup.settings").await?.is_none() {
+        if let Some(b) = &state.config.backup {
+            backup::save_settings(&state, Some(b)).await?;
+            tracing::info!("backup settings taken from the config file into the database");
+        }
+    }
+    if let Some(e) = &notify::settings(&state).await.email {
+        let bad = notify::bad_addresses(e);
+        if !bad.is_empty() {
+            let _ = db::kv_set(&state.db, "notify.last_error", &format!("email addresses do not parse: {}", bad.join(", "))).await;
+        }
     }
     tracing::info!("pocketcloud {} starting, interface at https://{}", env!("CARGO_PKG_VERSION"), state.config.interface_host);
 
@@ -309,6 +317,7 @@ async fn daemon(config: Config) -> Result<()> {
                 let _ = db::add_metrics(&st.db, &sample.metrics()).await;
                 *st.sample.write().await = sample;
                 st.docker_ok.store(docker::ping(&st).await, std::sync::atomic::Ordering::Relaxed);
+                system::ensure_falco(system::falco_wanted(&st).await).await;
                 if tick.is_multiple_of(60) {
                     let now = chrono::Utc::now();
                     let _ = db::purge_monitoring(

@@ -21,14 +21,11 @@ pub struct Config {
     pub hetzner: HetznerConfig,
     pub vpn: VpnConfig,
     pub acme: AcmeConfig,
-    /// Nightly restic backups; absent means off and no backup UI
+    /// Seeds for the database on first start only; afterwards the interface owns backups and notifications
     #[serde(default)]
     pub backup: Option<BackupConfig>,
-    /// Where alerts go; absent means alerts only show in the interface
     #[serde(default)]
     pub notify: NotifyConfig,
-    #[serde(default)]
-    pub monitor: MonitorConfig,
     /// Seeded into the users table on first start, then ignored
     pub bootstrap_user: Option<BootstrapUser>,
     /// Developer mode: no nftables, wireguard, caddy, docker or acme calls, for running on a laptop
@@ -142,22 +139,6 @@ pub struct WebhookConfig {
     pub token: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitorConfig {
-    /// Falco runtime detection (eBPF); the installer adds or removes it
-    #[serde(default = "default_true")]
-    pub falco: bool,
-}
-
-impl Default for MonitorConfig {
-    fn default() -> Self {
-        MonitorConfig { falco: true }
-    }
-}
-
-fn default_true() -> bool {
-    true
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupConfig {

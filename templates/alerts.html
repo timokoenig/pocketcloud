@@ -9,7 +9,7 @@
 </div>
 <p class="muted small">
   {% if notify_configured %}Notifications: {{ channels }}{% if !notify_last.is_empty() %} · last sent {{ notify_last }}{% endif %}{% if !notify_error.is_empty() %} · <span class="tag err">last delivery failed: {{ notify_error }}</span>{% endif %}
-  {% else %}No notification channel configured; alerts only show here. Add <code>[notify.email]</code> or <code>[notify.webhook]</code> to the server config (see docs/operations.md).{% endif %}
+  {% else %}No notification channel configured yet; alerts only show here. Set one up below.{% endif %}
   {% if !heartbeat.is_empty() %} · heartbeat {{ heartbeat }}{% endif %}
 </p>
 
@@ -35,6 +35,22 @@
   </tbody>
 </table>
 {% endif %}
+
+<h2>Notifications</h2>
+<form method="post" action="/alerts/notify" class="grid thresholds" autocomplete="off">
+  <label>E-mail to (comma-separated) <input name="to" value="{{ notify.to }}" placeholder="you@example.com"></label>
+  <label>From <input name="from" value="{{ notify.from }}" placeholder="pocketcloud@example.com"></label>
+  <label>SMTP host <input name="smtp_host" value="{{ notify.smtp_host }}" placeholder="smtp.example.com"></label>
+  <label>SMTP port <input name="smtp_port" type="number" min="1" max="65535" value="{{ notify.smtp_port }}"></label>
+  <label>TLS <select name="smtp_tls"><option value="starttls"{% if notify.smtp_tls == "starttls" %} selected{% endif %}>starttls</option><option value="implicit"{% if notify.smtp_tls == "implicit" %} selected{% endif %}>implicit</option><option value="none"{% if notify.smtp_tls == "none" %} selected{% endif %}>none</option></select></label>
+  <label>SMTP user <input name="smtp_user" value="{{ notify.smtp_user }}"></label>
+  <label>SMTP password {% if notify.has_password %}<span class="muted small">(set; leave empty to keep)</span>{% endif %}<textarea name="smtp_password" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+  <label>Webhook URL <input name="webhook_url" value="{{ notify.webhook_url }}" placeholder="https://example.com/hook"></label>
+  <label>Webhook token {% if notify.has_webhook_token %}<span class="muted small">(set; leave empty to keep)</span>{% endif %}<textarea name="webhook_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+  <label>Heartbeat URL <input name="heartbeat_url" value="{{ notify.heartbeat_url }}" placeholder="https://hc-ping.com/..."></label>
+  <div><button class="primary">Save</button></div>
+</form>
+<p class="muted small">E-mail is on when host and recipients are set, the webhook when it has a URL; empty both to switch them off. The heartbeat URL is fetched every five minutes while the monitoring works; a dead man's switch service (healthchecks.io style, period 5 minutes) mails you when the pings stop, the one failure the server cannot report itself. The webhook also receives a stream of security events. Settings are stored sealed with the master key; the config file only seeds them on first start.</p>
 
 <h2>Thresholds</h2>
 <form method="post" action="/alerts/thresholds" class="grid thresholds">

@@ -21,6 +21,9 @@ Pick the binary that matches the server type: `aarch64` for the Arm types (CAX),
 
 The wizard, in order:
 
+Setup only does what needs your laptop: Hetzner, the server, domains, the first VPN device, the login and the
+recovery phrase. Backups, alerts, Falco and apps are configured in the interface afterwards.
+
 1. **Hetzner** tokens; both are checked immediately.
 2. **Domains**, comma separated, each must have a zone. The interface host defaults to `pocketcloud.<first domain>`
    and can be anything one label below a domain, but not `admin.`-style names you might want for apps.

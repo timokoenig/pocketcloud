@@ -57,11 +57,9 @@ if ! command -v trivy >/dev/null; then
   apt-get install -y -qq trivy >/dev/null
 fi
 
-# Falco runtime detection, when [monitor] falco = true (the default)
+# Falco runtime detection: the package is always installed; the daemon switches the service per the interface setting
 mkdir -p /var/log/infra
 FALCO=true
-grep -A3 '^\[monitor\]' /etc/pocketcloud/config.toml 2>/dev/null | grep -q '^falco = false' && FALCO=false
-[[ -f "$STAGE/config.toml" ]] && grep -A3 '^\[monitor\]' "$STAGE/config.toml" | grep -q '^falco = false' && FALCO=false
 if [[ "$FALCO" == true ]]; then
   if ! command -v falco >/dev/null; then
     log "falco"
@@ -88,9 +86,9 @@ webserver:
   enabled: false
 YAML
   systemctl disable --now falco-bpf falco-kmod >/dev/null 2>&1 || true
-  systemctl enable --now falco-modern-bpf >/dev/null 2>&1 || systemctl restart falco-modern-bpf || true
-else
-  systemctl disable --now falco-modern-bpf >/dev/null 2>&1 || true
+  # first install: on; later the daemon enforces the interface setting within a minute
+  systemctl is-enabled --quiet falco-modern-bpf 2>/dev/null || [[ -f /var/lib/pocketcloud/pocketcloud.db ]] || systemctl enable --now falco-modern-bpf >/dev/null 2>&1 || true
+  systemctl is-active --quiet falco-modern-bpf && systemctl restart falco-modern-bpf || true
 fi
 
 # Caddy with the Coraza WAF: the packaged binary stays as fallback (official custom-build procedure)

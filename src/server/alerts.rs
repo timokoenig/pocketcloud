@@ -217,12 +217,12 @@ pub async fn evaluate(state: &Shared, open: &HashSet<String>) -> Vec<Observation
             v.push(obs("notify", "warning", format!("notifications are failing: {err}"), 0));
         }
     }
-    if !state.config.notify.heartbeat_url.is_empty() && db::kv_get(&state.db, "notify.heartbeat_ok").await.ok().flatten().as_deref() == Some("0") {
+    if !notify::settings(state).await.heartbeat_url.is_empty() && db::kv_get(&state.db, "notify.heartbeat_ok").await.ok().flatten().as_deref() == Some("0") {
         v.push(obs("heartbeat", "warning", "the heartbeat URL does not answer; the dead man's switch will fire", 600));
     }
 
     // ---- backups and certificates
-    if state.config.backup.is_some() {
+    if super::backup::settings(state).await.is_some() {
         let b = super::backup::status(state).await;
         let enabled_since = match db::kv_get(&state.db, "backup.enabled_since").await.ok().flatten().and_then(|s| db::parse_time(&s)) {
             Some(t) => t,
@@ -549,7 +549,7 @@ pub async fn tick(state: &Shared) -> Result<()> {
 /// so a transient SMTP error does not lose a critical alert.
 pub async fn flush_notifications(state: &Shared) {
     let changes: Vec<Change> = std::mem::take(&mut *state.notify_queue.lock().await);
-    if changes.is_empty() || !state.config.notify.any() {
+    if changes.is_empty() || !notify::settings(state).await.any() {
         return;
     }
     if notify::deliver(state, &changes).await {
@@ -570,7 +570,7 @@ pub async fn flush_notifications(state: &Shared) {
 
 /// A hand-made notification, to prove the channels work.
 pub async fn send_test(state: &Shared) -> Result<()> {
-    if !state.config.notify.any() {
+    if !notify::settings(state).await.any() {
         anyhow::bail!("no notification channel configured");
     }
     let c = Change { event: "opened".into(), key: "test".into(), severity: "info".into(), summary: "test notification from the interface".into(), at: db::now() };

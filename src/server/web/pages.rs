@@ -71,7 +71,7 @@ pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Fla
         let db = state.db.clone();
         async move { db::kv_get(&db, &k).await.ok().flatten().unwrap_or_default() }
     };
-    let n = &state.config.notify;
+    let n = crate::server::notify::settings(&state).await;
     let mut channels = Vec::new();
     if let Some(e) = &n.email {
         channels.push(format!("e-mail to {}", e.to.join(", ")));
@@ -108,6 +108,18 @@ pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Fla
         t: alerts::thresholds(&state).await,
         notify_configured: n.any(),
         channels: channels.join(", "),
+        notify: views::NotifyForm {
+            to: n.email.as_ref().map(|e| e.to.join(", ")).unwrap_or_default(),
+            from: n.email.as_ref().map(|e| e.from.clone()).unwrap_or_default(),
+            smtp_host: n.email.as_ref().map(|e| e.smtp_host.clone()).unwrap_or_default(),
+            smtp_port: n.email.as_ref().map(|e| e.smtp_port).unwrap_or(587),
+            smtp_tls: n.email.as_ref().map(|e| e.smtp_tls.clone()).unwrap_or_else(|| "starttls".into()),
+            smtp_user: n.email.as_ref().map(|e| e.smtp_user.clone()).unwrap_or_default(),
+            has_password: n.email.as_ref().map(|e| !e.smtp_password.is_empty()).unwrap_or(false),
+            webhook_url: n.webhook.as_ref().map(|w| w.url.clone()).unwrap_or_default(),
+            has_webhook_token: n.webhook.as_ref().map(|w| !w.token.is_empty()).unwrap_or(false),
+            heartbeat_url: n.heartbeat_url.clone(),
+        },
         notify_last: if last.is_empty() { String::new() } else { views::ago(&last) },
         notify_error: kv("notify.last_error").await,
         heartbeat,
@@ -122,6 +134,74 @@ pub async fn set_thresholds(State(state): State<Shared>, user: User, Form(t): Fo
     crate::server::alerts::set_thresholds(&state, &t).await?;
     db::audit(&state.db, &user.username, "alerts.thresholds", &serde_json::to_string(&t).unwrap_or_default()).await?;
     Ok(back("/alerts", Some("thresholds saved"), None))
+}
+
+#[derive(Deserialize)]
+pub struct NotifySettingsForm {
+    #[serde(default)]
+    to: String,
+    #[serde(default)]
+    from: String,
+    #[serde(default)]
+    smtp_host: String,
+    #[serde(default)]
+    smtp_port: Option<u16>,
+    #[serde(default)]
+    smtp_tls: String,
+    #[serde(default)]
+    smtp_user: String,
+    /// empty keeps the stored password
+    #[serde(default)]
+    smtp_password: String,
+    #[serde(default)]
+    webhook_url: String,
+    #[serde(default)]
+    webhook_token: String,
+    #[serde(default)]
+    heartbeat_url: String,
+}
+
+/// Save where alerts go. E-mail is on when a host and a recipient are given, the webhook when it has a URL.
+pub async fn save_notify(State(state): State<Shared>, user: User, Form(f): Form<NotifySettingsForm>) -> R {
+    use crate::server::config::{EmailConfig, NotifyConfig, WebhookConfig};
+    let current = crate::server::notify::settings(&state).await;
+    let to: Vec<String> = f.to.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    let email = if f.smtp_host.trim().is_empty() && to.is_empty() {
+        None
+    } else {
+        if f.smtp_host.trim().is_empty() || to.is_empty() || f.from.trim().is_empty() {
+            return Ok(back("/alerts", None, Some("e-mail needs recipients, a from address and an SMTP host")));
+        }
+        if !matches!(f.smtp_tls.as_str(), "starttls" | "implicit" | "none") {
+            return Ok(back("/alerts", None, Some("TLS must be starttls, implicit or none")));
+        }
+        let password = if f.smtp_password.is_empty() { current.email.as_ref().map(|e| e.smtp_password.clone()).unwrap_or_default() } else { f.smtp_password.clone() };
+        let e = EmailConfig { to, from: f.from.trim().to_string(), smtp_host: f.smtp_host.trim().to_string(), smtp_port: f.smtp_port.unwrap_or(587), smtp_tls: f.smtp_tls.clone(), smtp_user: f.smtp_user.trim().to_string(), smtp_password: password };
+        let bad = crate::server::notify::bad_addresses(&e);
+        if !bad.is_empty() {
+            return Ok(back("/alerts", None, Some(&format!("these addresses do not parse: {}", bad.join(", ")))));
+        }
+        Some(e)
+    };
+    let webhook = if f.webhook_url.trim().is_empty() {
+        None
+    } else {
+        if !f.webhook_url.trim().starts_with("https://") && !f.webhook_url.trim().starts_with("http://") {
+            return Ok(back("/alerts", None, Some("the webhook URL must start with http:// or https://")));
+        }
+        let token = if f.webhook_token.is_empty() { current.webhook.as_ref().map(|w| w.token.clone()).unwrap_or_default() } else { f.webhook_token.clone() };
+        Some(WebhookConfig { url: f.webhook_url.trim().to_string(), token })
+    };
+    let heartbeat_url = f.heartbeat_url.trim().to_string();
+    if !heartbeat_url.is_empty() && !heartbeat_url.starts_with("https://") && !heartbeat_url.starts_with("http://") {
+        return Ok(back("/alerts", None, Some("the heartbeat URL must start with http:// or https://")));
+    }
+    let cfg = NotifyConfig { email, webhook, heartbeat_url };
+    crate::server::notify::save_settings(&state, &cfg).await?;
+    let _ = db::kv_set(&state.db, "notify.last_error", "").await;
+    let _ = db::kv_set(&state.db, "notify.failures", "0").await;
+    db::audit(&state.db, &user.username, "alerts.notify", &format!("email={} webhook={} heartbeat={}", cfg.email.is_some(), cfg.webhook.is_some(), !cfg.heartbeat_url.is_empty())).await?;
+    Ok(back("/alerts", Some("notification settings saved; send a test to prove them"), None))
 }
 
 pub async fn test_notification(State(state): State<Shared>, user: User) -> R {
@@ -172,7 +252,7 @@ async fn backup_view(state: &Shared) -> views::BackupView {
 
 /// Dashboard notice: a failed last run, or no success for two days.
 async fn backup_warning(state: &Shared) -> Option<String> {
-    if state.config.backup.is_none() {
+    if crate::server::backup::settings(state).await.is_none() {
         return None;
     }
     let s = crate::server::backup::status(state).await;
@@ -399,6 +479,17 @@ pub async fn server(State(state): State<Shared>, user: User, Query(f): Query<Fla
         jails: if state.config.dev { vec![] } else { system::fail2ban_status().await },
         backup: backup_view(&state).await,
         snapshots: crate::server::backup::cached_snapshots(&state).await,
+        backup_form: {
+            let c = crate::server::backup::settings(&state).await;
+            views::BackupForm {
+                s3_endpoint: c.as_ref().map(|c| c.s3_endpoint.clone()).unwrap_or_else(|| "https://fsn1.your-objectstorage.com".into()),
+                bucket: c.as_ref().map(|c| c.bucket.clone()).unwrap_or_default(),
+                access_key: c.as_ref().map(|c| c.access_key.clone()).unwrap_or_default(),
+                has_secret: c.is_some(),
+                hour: c.as_ref().map(|c| c.hour).unwrap_or(3),
+            }
+        },
+        falco_on: crate::server::system::falco_wanted(&state).await,
         newer_release: host.latest_version.clone(),
         host,
         uptime,
@@ -442,8 +533,72 @@ pub async fn upgrade(State(state): State<Shared>, user: User) -> R {
     Ok(back(&format!("/jobs/{job}"), None, None))
 }
 
+#[derive(Deserialize)]
+pub struct BackupSettingsForm {
+    s3_endpoint: String,
+    bucket: String,
+    access_key: String,
+    /// empty keeps the stored key
+    #[serde(default)]
+    secret_key: String,
+    #[serde(default)]
+    hour: Option<u8>,
+}
+
+/// Configure or change nightly backups from the server page; the restic password is derived from the master key.
+pub async fn save_backup(State(state): State<Shared>, user: User, Form(f): Form<BackupSettingsForm>) -> R {
+    use crate::server::config::BackupConfig;
+    let current = crate::server::backup::settings(&state).await;
+    let endpoint = f.s3_endpoint.trim().trim_end_matches('/').to_string();
+    let bucket = f.bucket.trim().to_string();
+    let access_key = f.access_key.trim().to_string();
+    if endpoint.is_empty() || bucket.is_empty() || access_key.is_empty() {
+        return Ok(back("/server", None, Some("endpoint, bucket and access key are needed")));
+    }
+    if !bucket.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.') {
+        return Ok(back("/server", None, Some("the bucket name looks wrong")));
+    }
+    let secret_key = if f.secret_key.is_empty() { current.as_ref().map(|c| c.secret_key.clone()).unwrap_or_default() } else { f.secret_key.clone() };
+    if secret_key.is_empty() {
+        return Ok(back("/server", None, Some("the secret key is needed the first time")));
+    }
+    let hour = f.hour.unwrap_or(3).min(23);
+    let cfg = BackupConfig { s3_endpoint: endpoint, bucket, access_key, secret_key, hour };
+    crate::server::backup::save_settings(&state, Some(&cfg)).await?;
+    let _ = db::kv_set(&state.db, "backup.last_error", "").await;
+    db::audit(&state.db, &user.username, "backup.settings", &format!("s3://{}", cfg.bucket)).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} configured backups to {}", user.username, crate::server::backup::repo_of(&cfg)), &serde_json::json!({"user": user.username, "action": "backup.settings"})).await;
+    Ok(back("/server", Some("backup settings saved; Back up now proves them"), None))
+}
+
+pub async fn disable_backup(State(state): State<Shared>, user: User, Form(f): Form<ConfirmForm>) -> R {
+    if f.confirm.trim() != "disable" {
+        return Ok(back("/server", None, Some("type disable to confirm")));
+    }
+    crate::server::backup::save_settings(&state, None).await?;
+    db::audit(&state.db, &user.username, "backup.disable", "").await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} switched backups off", user.username), &serde_json::json!({"user": user.username, "action": "backup.disable"})).await;
+    Ok(back("/server", Some("backups switched off; snapshots stay in the bucket"), None))
+}
+
+#[derive(Deserialize)]
+pub struct OnOff {
+    value: String,
+}
+
+/// Falco runtime detection on or off; the daemon applies it to the service within a minute.
+pub async fn set_falco(State(state): State<Shared>, user: User, Form(f): Form<OnOff>) -> R {
+    let on = f.value == "on";
+    db::kv_set(&state.db, "monitor.falco", if on { "1" } else { "0" }).await?;
+    db::audit(&state.db, &user.username, "monitor.falco", &on.to_string()).await?;
+    if !on {
+        let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} switched Falco off", user.username), &serde_json::json!({"user": user.username, "action": "monitor.falco"})).await;
+    }
+    Ok(back("/server", Some(if on { "Falco switched on" } else { "Falco switched off" }), None))
+}
+
 pub async fn backup_now(State(state): State<Shared>, user: User) -> R {
-    if state.config.backup.is_none() {
+    if crate::server::backup::settings(&state).await.is_none() {
         return Ok(back("/server", None, Some("backups are not configured")));
     }
     db::audit(&state.db, &user.username, "server.backup", "").await?;
@@ -454,7 +609,7 @@ pub async fn backup_now(State(state): State<Shared>, user: User) -> R {
 }
 
 pub async fn refresh_snapshots(State(state): State<Shared>, user: User) -> R {
-    if state.config.backup.is_none() {
+    if crate::server::backup::settings(&state).await.is_none() {
         return Ok(back("/server", None, Some("backups are not configured")));
     }
     db::audit(&state.db, &user.username, "server.snapshots", "").await?;
@@ -472,7 +627,7 @@ pub struct RestoreForm {
 
 /// Import the apps of a snapshot (an earlier installation) and restore their data.
 pub async fn restore_import(State(state): State<Shared>, user: User, Form(f): Form<RestoreForm>) -> R {
-    if state.config.backup.is_none() {
+    if crate::server::backup::settings(&state).await.is_none() {
         return Ok(back("/server", None, Some("backups are not configured")));
     }
     if f.confirm.trim() != "restore" {
@@ -480,7 +635,7 @@ pub async fn restore_import(State(state): State<Shared>, user: User, Form(f): Fo
     }
     db::audit(&state.db, &user.username, "server.restore", &f.snapshot).await?;
     let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} started a restore of all apps from snapshot {}", user.username, f.snapshot.trim()), &serde_json::json!({"user": user.username, "action": "server.restore"})).await;
-    let redact = state.config.backup.as_ref().map(|b| vec![b.secret_key.clone()]).unwrap_or_default();
+    let redact = crate::server::backup::settings(&state).await.map(|b| vec![b.secret_key]).unwrap_or_default();
     let snap = f.snapshot.trim().to_string();
     match jobs::spawn(&state, "restore-all", None, redact, move |s, log| crate::server::backup::restore_import(s, snap, log)).await {
         Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),

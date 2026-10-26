@@ -43,9 +43,9 @@
     <p class="muted small">Security updates install automatically every day; reboots never happen on their own.</p>
   </div>
 </div>
-{% if backup.enabled %}
 <h2>Backups</h2>
 <div class="card">
+{% if backup.enabled %}
   {% if !backup.last_error.is_empty() %}<div class="flash err">last run failed: {{ backup.last_error }}</div>{% endif %}
   <dl>
     <dt>Repository</dt><dd><code>{{ backup.repo }}</code></dd>
@@ -68,8 +68,34 @@
     {% endif %}
   </details>
   <p class="muted small">Contents: the pocketcloud database, the server config, and for every app with backups on its volumes, files and a dump of each postgres or mysql service. Never the master key: the recovery phrase is its backup. Restore: <code>pocketcloud backup &lt;name&gt; password</code> gives the restic password.</p>
-</div>
+  <details>
+    <summary>Change settings or switch off</summary>
+{% else %}
+  <p class="muted">Backups are off. Create a bucket and S3 credentials in Hetzner Object Storage, enter them here, and every night at the chosen hour restic stores the database, the server config and every app's volumes, files and database dumps, encrypted with a key derived from the master key. Snapshots are kept 30 days.</p>
+  <details open>
+    <summary>Set up backups</summary>
 {% endif %}
+    <form method="post" action="/server/backup-settings" class="grid thresholds" autocomplete="off">
+      <label>S3 endpoint <input name="s3_endpoint" value="{{ backup_form.s3_endpoint }}" required></label>
+      <label>Bucket <input name="bucket" value="{{ backup_form.bucket }}" required></label>
+      <label>Access key <input name="access_key" value="{{ backup_form.access_key }}" required autocomplete="off"></label>
+      <label>Secret key {% if backup_form.has_secret %}<span class="muted small">(set; leave empty to keep)</span>{% endif %}<textarea name="secret_key" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+      <label>Hour of the nightly run (server time) <input name="hour" type="number" min="0" max="23" value="{{ backup_form.hour }}"></label>
+      <div><button class="primary">Save</button></div>
+    </form>
+{% if backup.enabled %}
+    <form method="post" action="/server/backup-disable" class="row"><label>Type <code>disable</code> to switch backups off <input name="confirm" class="short" required autocomplete="off"></label><button class="danger">Disable</button></form>
+{% endif %}
+  </details>
+</div>
+
+<h2>Runtime detection</h2>
+<div class="card">
+  <form method="post" action="/server/falco" class="row">
+    {% if falco_on %}<input type="hidden" name="value" value="off"><button class="toggle on" title="Falco is on; click to switch it off">Falco on</button>{% else %}<input type="hidden" name="value" value="on"><button class="toggle" title="Falco is off; click to switch it on">Falco off</button>{% endif %}
+    <span class="muted small">Falco watches syscalls with an eBPF probe: shells in containers, sensitive file reads, unexpected network activity, privilege escalation. About 150 MB of memory. Its events are on the Events page and alert by priority.</span>
+  </form>
+</div>
 <h2>Web application firewall{% if !waf_available %} <span class="status failed">unavailable</span>{% endif %}</h2>
 {% if !waf_available %}
 <p class="muted">The installed Caddy has no Coraza module, public routes run without the WAF. <code>pocketcloud upgrade &lt;name&gt;</code> installs the bundled build.</p>

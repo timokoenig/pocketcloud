@@ -244,6 +244,7 @@ pub async fn quick_status() -> HostStatus {
     if Path::new("/etc/systemd/system/multi-user.target.wants/falco-modern-bpf.service").exists() {
         units.push("falco-modern-bpf");
     }
+    // the service list drives the service-down alert; a Falco that is switched off must not count
     for unit in units {
         let ok = Command::new("systemctl").args(["is-active", "--quiet", unit]).status().await.map(|s| s.success()).unwrap_or(false);
         s.services.push((unit.to_string(), ok));
@@ -303,6 +304,22 @@ pub fn aide_state() -> AideState {
     let baseline_time = std::fs::metadata("/var/lib/aide/aide.db").and_then(|m| m.modified()).ok();
     let outdated = matches!((report_time, baseline_time), (Some(r), Some(b)) if b > r);
     AideState { added: find("Added entries"), removed: find("Removed entries"), changed: find("Changed entries"), exit_code, age_hours, ran: true, outdated }
+}
+
+/// Falco on or off, from the database; on by default.
+pub async fn falco_wanted(state: &super::state::Shared) -> bool {
+    super::db::kv_get(&state.db, "monitor.falco").await.ok().flatten().as_deref() != Some("0")
+}
+
+/// Make the Falco service match the setting; the package itself is always installed.
+pub async fn ensure_falco(wanted: bool) {
+    let unit = "falco-modern-bpf";
+    let active = Command::new("systemctl").args(["is-active", "--quiet", unit]).status().await.map(|s| s.success()).unwrap_or(false);
+    if wanted && !active {
+        let _ = run("systemctl", &["enable", "--now", unit]).await;
+    } else if !wanted && active {
+        let _ = run("systemctl", &["disable", "--now", unit]).await;
+    }
 }
 
 /// The installed Caddy lists `http.handlers.waf` when it was built with coraza-caddy.

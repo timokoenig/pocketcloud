@@ -196,32 +196,6 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
     let email: String = Input::with_theme(&theme()).with_prompt("E-mail for Let's Encrypt (expiry warnings, optional)").allow_empty(true).default(String::new()).interact_text()?;
     let staging = Confirm::with_theme(&theme()).with_prompt("Use the Let's Encrypt staging environment (untrusted certificates, for trying things out)?").default(false).interact()?;
 
-    step("Alerts");
-    let notify = if Confirm::with_theme(&theme()).with_prompt("Send alerts by e-mail? (SMTP account needed)").default(false).interact()? {
-        Some(crate::backup_cli::ask_email()?)
-    } else {
-        info("alerts only show in the interface; [notify.email] in the server config switches mail on later");
-        None
-    };
-    let heartbeat: String = Input::with_theme(&theme())
-        .with_prompt("Heartbeat URL of a dead man's switch (healthchecks.io style; the only way to learn the server itself is gone; empty for none)")
-        .allow_empty(true)
-        .default(String::new())
-        .interact_text()?;
-    let falco = Confirm::with_theme(&theme()).with_prompt("Install Falco runtime detection? (eBPF, about 150 MB RAM)").default(true).interact()?;
-
-    step("Backups");
-    let backup = if Confirm::with_theme(&theme())
-        .with_prompt("Back up this server nightly to Hetzner Object Storage (restic, encrypted with the master key)?")
-        .default(false)
-        .interact()?
-    {
-        Some(crate::backup_cli::ask()?)
-    } else {
-        info("no backups; `pocketcloud backup <name> enable` switches them on later");
-        None
-    };
-
     step("Plan");
     let price = server_type.monthly_gross(&location).unwrap_or(0.0);
     println!("  server      {} in {location}, {IMAGE}, {price:.2} €/month", server_type.name);
@@ -230,11 +204,7 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
     println!("  interface   https://{interface_host} (VPN only)");
     println!("  dns         {} and *.{} → server", domains.join(", "), domains.join(", *."));
     println!("  ssh         user {ssh_user}, key only, via VPN after setup");
-    match &backup {
-        Some(b) => println!("  backups     nightly 03:30 to s3://{} (restic, kept 30 days)", b.bucket),
-        None => println!("  backups     none"),
-    }
-    println!("  alerts      {}{}{}", match &notify { Some(n) => format!("e-mail to {}", n.to.join(", ")), None => "interface only".into() }, if heartbeat.is_empty() { "" } else { ", heartbeat" }, if falco { ", falco" } else { "" });
+    println!("  afterwards  backups, alerts, Falco and apps are configured in the interface");
     if !args.yes && !Confirm::with_theme(&theme()).with_prompt("Create this?").default(true).interact()? {
         bail!("aborted");
     }
@@ -310,10 +280,6 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
         staging,
         username: &username,
         password_hash: &crypto::hash_password(&password)?,
-        backup: backup.as_ref(),
-        notify: notify.as_ref(),
-        heartbeat_url: &heartbeat,
-        falco,
     });
 
     // the client config needs the server address; written now with a placeholder and completed after creation
@@ -352,16 +318,11 @@ struct ServerConfigInput<'a> {
     staging: bool,
     username: &'a str,
     password_hash: &'a str,
-    backup: Option<&'a crate::backup_cli::BackupInput>,
-    notify: Option<&'a crate::backup_cli::EmailInput>,
-    heartbeat_url: &'a str,
-    falco: bool,
 }
 
 fn render_server_config(c: &ServerConfigInput) -> String {
     let domains = c.domains.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>().join(", ");
-    let backup = c.backup.map(crate::backup_cli::render_section).unwrap_or_default();
-    let notify = crate::backup_cli::render_notify_section(c.notify, c.heartbeat_url, c.falco);
+
     format!(
         r#"# written by pocketcloud setup
 name = {name:?}
@@ -390,7 +351,7 @@ environment = {env:?}
 [bootstrap_user]
 username = {username:?}
 password_hash = {password_hash:?}
-{notify}{backup}"#,
+"#,
         name = c.name,
         interface_host = c.interface_host,
         dns_token = c.dns_token,
@@ -428,10 +389,7 @@ mod tests {
             staging: true,
             username: "timo",
             password_hash: "$argon2id$x",
-            backup: None,
-            notify: None,
-            heartbeat_url: "",
-            falco: true,
+
         });
         let c: crate::server::config::Config = toml::from_str(&s).unwrap();
         assert_eq!(c.domains.len(), 2);

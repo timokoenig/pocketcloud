@@ -24,16 +24,38 @@ pub struct BackupStatus {
     pub last_check: String,
 }
 
-pub fn repo(state: &State) -> Option<String> {
-    state.config.backup.as_ref().map(|b| format!("s3:{}/{}", b.s3_endpoint.trim_end_matches('/'), b.bucket))
+/// The backup settings: from the database (sealed with the master key, edited on the server page), seeded
+/// from the config file on first start. None means backups are off and there is no backup UI.
+pub async fn settings(state: &State) -> Option<super::config::BackupConfig> {
+    let b64 = db::kv_get(&state.db, "backup.settings").await.ok().flatten()?;
+    if b64.is_empty() {
+        return None;
+    }
+    use base64::Engine;
+    let sealed = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    let json = state.key.open_string(&sealed).ok()?;
+    serde_json::from_str(&json).ok()
 }
 
-fn env(state: &State) -> Result<Vec<(String, String)>> {
-    let b = state.config.backup.as_ref().ok_or_else(|| anyhow!("backups are not configured"))?;
+pub async fn save_settings(state: &State, cfg: Option<&super::config::BackupConfig>) -> Result<()> {
+    use base64::Engine;
+    let value = match cfg {
+        Some(c) => base64::engine::general_purpose::STANDARD.encode(state.key.seal(serde_json::to_string(c)?.as_bytes())),
+        None => String::new(),
+    };
+    db::kv_set(&state.db, "backup.settings", &value).await
+}
+
+pub fn repo_of(b: &super::config::BackupConfig) -> String {
+    format!("s3:{}/{}", b.s3_endpoint.trim_end_matches('/'), b.bucket)
+}
+
+async fn env(state: &State) -> Result<Vec<(String, String)>> {
+    let b = settings(state).await.ok_or_else(|| anyhow!("backups are not configured"))?;
     let cache = state.config.data_dir.join("restic-cache");
     std::fs::create_dir_all(&cache)?;
     Ok(vec![
-        ("RESTIC_REPOSITORY".into(), repo(state).unwrap_or_default()),
+        ("RESTIC_REPOSITORY".into(), repo_of(&b)),
         ("RESTIC_PASSWORD".into(), state.key.derive("restic").to_string()),
         ("RESTIC_CACHE_DIR".into(), cache.display().to_string()),
         ("AWS_ACCESS_KEY_ID".into(), b.access_key.clone()),
@@ -68,7 +90,7 @@ fn is_transient(msg: &str) -> bool {
 /// One restic run; stdout is returned, stderr goes to the log. Non-zero exit is an error with restic's own message.
 async fn restic_once(state: &State, args: &[&str], log: Option<&Log>) -> Result<String> {
     let mut cmd = Command::new("restic");
-    cmd.args(args).envs(env(state)?).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    cmd.args(args).envs(env(state).await?).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
     if let Some(l) = log {
         l.line(format!("$ restic {}", args.join(" "))).await;
     }
@@ -114,10 +136,11 @@ pub async fn status(state: &State) -> BackupStatus {
         let k = k.to_string();
         async move { db::kv_get(&state.db, &k).await.ok().flatten().unwrap_or_default() }
     };
+    let cfg = settings(state).await;
     BackupStatus {
-        enabled: state.config.backup.is_some(),
-        repo: repo(state).unwrap_or_default(),
-        hour: state.config.backup.as_ref().map(|b| b.hour).unwrap_or(3),
+        enabled: cfg.is_some(),
+        repo: cfg.as_ref().map(repo_of).unwrap_or_default(),
+        hour: cfg.as_ref().map(|b| b.hour).unwrap_or(3),
         last_ok: get("backup.last_ok").await,
         last_error: get("backup.last_error").await,
         last_snapshot: get("backup.last_snapshot").await,
@@ -128,13 +151,13 @@ pub async fn status(state: &State) -> BackupStatus {
 }
 
 pub async fn spawn_job(state: &Shared) -> Result<i64> {
-    let redact = state.config.backup.as_ref().map(|b| vec![b.secret_key.clone()]).unwrap_or_default();
+    let redact = settings(state).await.map(|b| vec![b.secret_key]).unwrap_or_default();
     jobs::spawn(state, "backup", None, redact, |s, log| run(s, log)).await
 }
 
 /// Called once a minute from the host loop: starts the nightly job in its window, once per day.
 pub async fn tick(state: &Shared) {
-    let Some(b) = &state.config.backup else { return };
+    let Some(b) = settings(state).await else { return };
     let now = chrono::Local::now();
     if now.hour() != b.hour as u32 || !(30..35).contains(&now.minute()) {
         return;

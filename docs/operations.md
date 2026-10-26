@@ -34,8 +34,8 @@ force, ban waves, OOM kills, kernel errors, failed units, sensitive file changes
 5xx bursts, containers dying, restart loops. Thresholds are editable on the *Alerts* page. Info-level alerts
 (a newer release, a reboot happened) show but do not notify.
 
-Notifications: `[notify.email]` (SMTP) and `[notify.webhook]` in the server config; setup asks for the mail
-account. Opened and resolved alerts are collected for a minute and sent as one message with the worst thing in
+Notifications are configured on the *Alerts* page (e-mail over SMTP, a webhook, the heartbeat URL), stored
+sealed with the master key. A `[notify]` section in the config file seeds them on first start, nothing more. Opened and resolved alerts are collected for a minute and sent as one message with the worst thing in
 the subject. `heartbeat_url` is pinged every five minutes while the daemon runs, for a dead man's switch service
 (healthchecks.io style) that tells you when the server itself is gone, the one thing it cannot report.
 *Send test notification* on the Alerts page and `sudo pocketcloud server notify-test` prove the channels.
@@ -62,8 +62,8 @@ and only inform; findings without a package change in between stay a warning unt
 packages from third-party repositories (Docker, Caddy, Falco, Trivy) are not installed by unattended-upgrades and
 open a warning until Server → Upgrade.
 
-Falco (`[monitor] falco = true`, the default) is the Falco package with the eBPF probe, writing JSON events to
-`/var/log/infra/falco.jsonl`; the installer adds or removes it on the next upgrade. It costs about 150 MB.
+Falco is the Falco package with the eBPF probe, writing JSON events to `/var/log/infra/falco.jsonl`; the
+switch on the server page starts or stops its service within a minute. It costs about 150 MB.
 
 ## What an upgrade applies
 
@@ -78,8 +78,8 @@ cloud-init (user, ssh key, bootstrap firewall) runs once, at first boot. Each in
 
 ## Backups
 
-Opt-in per installation: setup asks, `pocketcloud backup <name> enable` switches it on later, `disable` off.
-Without it there is no backup UI at all. Storage is Hetzner Object Storage (S3) through restic; the repository is
+Opt-in per installation, on the server page: enter the Hetzner Object Storage endpoint, bucket and S3 keys
+there; *Disable* switches them off again. Settings are stored sealed with the master key. Storage is Hetzner Object Storage (S3) through restic; the repository is
 encrypted with a password derived from the master key, so the recovery phrase plus the bucket credentials restore
 everything. Nightly at 03:30 server time; every snapshot is kept for 30 days and deleted after that, integrity check on
 Sundays.
@@ -110,8 +110,8 @@ Restore in the interface:
   stopped, its volumes and `files` are replaced by the snapshot's, database dumps are replayed into the database
   services (started first, alone), then everything starts. Current data is overwritten.
 - **A rebuilt server**: run `pocketcloud setup <newname>` and answer *yes* to reusing the recovery phrase of the
-  old installation, so the new server has the same master key. Enable backups with the same bucket (setup asks,
-  or `pocketcloud backup <name> enable`). On the server page press *Refresh snapshots*, then *Restore apps from a
+  old installation, so the new server has the same master key. Enter the same bucket on the server page, press
+  *Refresh snapshots*, then *Restore apps from a
   snapshot*: every app of the snapshot that does not exist yet is imported with compose file, routes, secrets and
   settings, deployed, and its data restored. The job log tells per app what happened. Devices, users and VPN
   peers are not imported; they belong to the new server.
