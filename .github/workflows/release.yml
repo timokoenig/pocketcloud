@@ -1,17 +1,60 @@
+# Manual release: pick patch, minor or major. The workflow bumps the version in Cargo.toml and Cargo.lock, commits
+# and tags that, creates the GitHub release, and the build jobs attach the binaries with their checksums.
 name: release
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 permissions:
   contents: write
+concurrency: release
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -eu
+          current=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          IFS=. read -r major minor patch <<<"$current"
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          version="$major.$minor.$patch"
+          perl -0pi -e 's/^version = "[^"]+"/version = "'"$version"'"/m' Cargo.toml
+          perl -0pi -e 's/(name = "pocketcloud"\nversion = )"[^"]+"/$1"'"$version"'"/' Cargo.lock
+          perl -0ne 'exit 1 unless /^version = "'"$version"'"/m' Cargo.toml
+          perl -0ne 'exit 1 unless /name = "pocketcloud"\nversion = "'"$version"'"/' Cargo.lock
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release v$version"
+          git tag "v$version"
+          git push origin HEAD "v$version"
+          gh release create "v$version" --title "v$version" --generate-notes
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "released v$version (was $current, $BUMP bump)" >> "$GITHUB_STEP_SUMMARY"
   build:
+    needs: version
     runs-on: ubuntu-latest
     strategy:
       matrix:
         target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.version.outputs.version }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -20,13 +63,11 @@ jobs:
       - run: cargo zigbuild --release --target ${{ matrix.target }}
       - run: cp target/${{ matrix.target }}/release/pocketcloud pocketcloud-${{ matrix.target }}
       - run: sha256sum pocketcloud-${{ matrix.target }} > pocketcloud-${{ matrix.target }}.sha256
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            pocketcloud-${{ matrix.target }}
-            pocketcloud-${{ matrix.target }}.sha256
-          generate_release_notes: true
+      - run: gh release upload v${{ needs.version.outputs.version }} pocketcloud-${{ matrix.target }} pocketcloud-${{ matrix.target }}.sha256 --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
   caddy:
+    needs: version
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -36,24 +77,29 @@ jobs:
           - target: aarch64-unknown-linux-musl
             goarch: arm64
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.version.outputs.version }}
       - uses: actions/setup-go@v5
         with:
           go-version: stable
       - run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
       - run: GOOS=linux GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 xcaddy build --with github.com/corazawaf/coraza-caddy/v2@v2.6.2 --output caddy-${{ matrix.target }}
       - run: sha256sum caddy-${{ matrix.target }} > caddy-${{ matrix.target }}.sha256
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            caddy-${{ matrix.target }}
-            caddy-${{ matrix.target }}.sha256
+      - run: gh release upload v${{ needs.version.outputs.version }} caddy-${{ matrix.target }} caddy-${{ matrix.target }}.sha256 --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
   macos:
+    needs: version
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.version.outputs.version }}
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
       - run: cp target/release/pocketcloud pocketcloud-aarch64-apple-darwin
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: pocketcloud-aarch64-apple-darwin
+      - run: shasum -a 256 pocketcloud-aarch64-apple-darwin > pocketcloud-aarch64-apple-darwin.sha256
+      - run: gh release upload v${{ needs.version.outputs.version }} pocketcloud-aarch64-apple-darwin pocketcloud-aarch64-apple-darwin.sha256 --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

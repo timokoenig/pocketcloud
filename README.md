@@ -62,3 +62,10 @@ cargo run -- server --config dev/config.toml     # dev = true: no docker, nftabl
 
 A dev config needs `dev = true`, a `master_key_file` with 64 hex characters and a `bootstrap_user` with a hash from
 `pocketcloud hash-password <pw>`. The interface then listens on `http://127.0.0.1:7788`.
+
+## Releases
+
+Releases are cut from GitHub Actions: run the *release* workflow and choose `patch`, `minor` or `major`. It bumps
+the version in `Cargo.toml` and `Cargo.lock`, commits and tags `v<version>`, creates the release and attaches the
+Linux server binaries, the Caddy builds with Coraza and the macOS binary, each with a `.sha256` file. The
+version in the binary is what setup downloads by and what the Server page compares against, so never tag by hand.
