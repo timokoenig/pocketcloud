@@ -148,6 +148,7 @@ async fn build_state(config: Config) -> Result<Shared> {
         tick_ok: std::sync::atomic::AtomicBool::new(true),
         journal_seen: std::sync::atomic::AtomicI64::new(chrono::Utc::now().timestamp()),
         probe_failures: Mutex::new(HashMap::new()),
+        notified: Mutex::new(HashMap::new()),
         config,
     }))
 }

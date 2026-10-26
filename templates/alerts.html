@@ -67,10 +67,12 @@
   <label>Backup stale after hours <input name="backup_stale_hours" type="number" min="1" value="{{ t.backup_stale_hours }}"></label>
   <label>Reboot pending warning after days <input name="reboot_days" type="number" min="0" value="{{ t.reboot_days }}"></label>
   <label>Certificate expiry warning days <input name="cert_days" type="number" min="1" value="{{ t.cert_days }}"></label>
-  <label>Mail every ssh login <select name="notify_ssh_login"><option value="true"{% if t.notify_ssh_login %} selected{% endif %}>yes</option><option value="false"{% if !t.notify_ssh_login %} selected{% endif %}>no</option></select></label>
+  <label>Send <select name="notify_min"><option value="warning"{% if t.notify_min == "warning" %} selected{% endif %}>warnings and criticals</option><option value="critical"{% if t.notify_min == "critical" %} selected{% endif %}>criticals only</option></select></label>
+  <label>Send interface actions (VPN device, registry, WAF off, app removed, restore) <select name="notify_admin_actions"><option value="true"{% if t.notify_admin_actions %} selected{% endif %}>yes</option><option value="false"{% if !t.notify_admin_actions %} selected{% endif %}>no</option></select></label>
+  <label>Send every ssh login <select name="notify_ssh_login"><option value="false"{% if !t.notify_ssh_login %} selected{% endif %}>no</option><option value="true"{% if t.notify_ssh_login %} selected{% endif %}>yes</option></select></label>
   <div><button class="primary">Save</button></div>
 </form>
-<p class="muted small">Fixed checks: disk, inodes, memory, memory and io pressure, swap, cpu, clock, services, Docker API, reboot pending, backups, certificates, deploys, AIDE, ssh brute force, bans, OOM kills, kernel errors, failed units, sensitive file changes (auditd), Falco, WAF spikes, 5xx bursts, containers dying, out of memory, unhealthy or restart-looping. Checks run every minute; opened and resolved alerts are sent once a minute as one message.</p>
+<p class="muted small">Fixed checks: disk, inodes, memory, memory and io pressure, swap, cpu, clock, services, Docker API, reboot pending, backups, certificates, deploys, AIDE, ssh brute force, bans, OOM kills, kernel errors, failed units, sensitive file changes (auditd), Falco, WAF spikes, 5xx bursts, containers dying, out of memory, unhealthy or restart-looping. Checks run every minute; opened and resolved alerts are sent once a minute as one message, and the same alert at most once an hour unless it turns critical. Internet background noise (WAF blocks, bans, ssh brute force) never leaves the interface.</p>
 
 <h2>Last 24 hours</h2>
 <table class="compact">

@@ -29,13 +29,17 @@ pub struct Thresholds {
     pub backup_stale_hours: i64,
     pub reboot_days: i64,
     pub cert_days: i64,
-    /// mail every successful ssh login (one admin: every login is worth a line)
+    /// mail every successful ssh login
     pub notify_ssh_login: bool,
+    /// mail security-relevant interface actions (new VPN device, registry credentials, WAF off, app removed, restore)
+    pub notify_admin_actions: bool,
+    /// "warning" (warnings and criticals) or "critical" (criticals only); infos never, except the two above
+    pub notify_min: String,
 }
 
 impl Default for Thresholds {
     fn default() -> Self {
-        Thresholds { disk_warn: 85.0, disk_crit: 95.0, inodes_warn: 90.0, mem_warn: 10.0, mem_crit: 5.0, cpu_warn: 95.0, swap_warn: 50.0, ssh_failed: 3, waf_blocks: 50, http_5xx: 20, backup_stale_hours: 48, reboot_days: 2, cert_days: 7, notify_ssh_login: true }
+        Thresholds { disk_warn: 85.0, disk_crit: 95.0, inodes_warn: 90.0, mem_warn: 10.0, mem_crit: 5.0, cpu_warn: 95.0, swap_warn: 50.0, ssh_failed: 3, waf_blocks: 50, http_5xx: 20, backup_stale_hours: 48, reboot_days: 2, cert_days: 7, notify_ssh_login: false, notify_admin_actions: true, notify_min: "warning".into() }
     }
 }
 
@@ -300,13 +304,14 @@ pub async fn evaluate(state: &Shared, open: &HashSet<String>) -> Vec<Observation
     }
 
     // ---- events
-    burst(state, open, "ssh_failed", "ip", "ssh-bruteforce", t.ssh_failed, 10, 30, "warning", "failed ssh logins from", &mut v).await;
+    // fail2ban handles these; they are the timeline, not a page
+    burst(state, open, "ssh_failed", "ip", "ssh-bruteforce", t.ssh_failed, 10, 30, "info", "failed ssh logins from", &mut v).await;
     // any sshd event from outside the VPN proves port 22 is open to the internet (rescue open-ssh left open?)
-    for kind in ["ssh_login", "ssh_failed"] {
-        for (ip, (n, last)) in grouped(state, kind, 30, "ip").await {
+    'public: for kind in ["ssh_login", "ssh_failed"] {
+        for (ip, (n, last)) in grouped(state, kind, 24 * 60, "ip").await {
             if !ip.starts_with("10.8.0.") && !ip.is_empty() {
-                v.push(obs("ssh-public", "warning", format!("ssh is reachable from the internet: {n} {kind} from {ip} in 30m ({last})"), 0));
-                break;
+                v.push(Observation { key: "ssh-public".into(), severity: "warning", summary: format!("ssh is reachable from the internet: {n} {kind} from {ip} in 24h ({last}); close it with rescue close-ssh"), hold_s: 0, notify: true, event: true });
+                break 'public;
             }
         }
     }
@@ -315,11 +320,11 @@ pub async fn evaluate(state: &Shared, open: &HashSet<String>) -> Vec<Observation
             v.push(Observation { key: format!("ssh-login:{ip}"), severity: "info", summary: format!("{last} ({n} in 15m)"), hold_s: 0, notify: true, event: true });
         }
     }
-    burst(state, open, "ban", "", "ban-wave", 5, 60, 60, "warning", "many bans", &mut v).await;
+    burst(state, open, "ban", "", "ban-wave", 5, 60, 60, "info", "many bans", &mut v).await;
     burst(state, open, "login_failed", "ip", "interface-bruteforce", 5, 10, 30, "warning", "failed interface logins from", &mut v).await;
     // things done in the interface that an intruder would also do: told once, closes silently
     for e in db::events_since(&state.db, "admin_action", &ago(15)).await.unwrap_or_default() {
-        v.push(Observation { key: format!("admin:{}", e.id), severity: "info", summary: e.summary, hold_s: 0, notify: true, event: true });
+        v.push(Observation { key: format!("admin:{}", e.id), severity: "info", summary: e.summary, hold_s: 0, notify: t.notify_admin_actions, event: true });
     }
     burst(state, open, "oom_kill", "comm", "oom", 1, 15, 15, "warning", "OOM kill of", &mut v).await;
     burst(state, open, "kernel_error", "", "kernel", 1, 15, 15, "critical", "kernel error", &mut v).await;
@@ -334,7 +339,7 @@ pub async fn evaluate(state: &Shared, open: &HashSet<String>) -> Vec<Observation
     burst(state, open, "audit_setuid", "", "audit-setuid", 1, 15, 15, "warning", "setuid execution", &mut v).await;
     burst(state, open, "audit_mount", "", "audit-mount", 1, 15, 15, "info", "filesystem mounted", &mut v).await;
     burst(state, open, "audit_module", "", "audit-module", 1, 15, 15, "info", "kernel module loaded or removed", &mut v).await;
-    burst(state, open, "waf_block", "ip", "waf-spike", t.waf_blocks, 10, 30, "warning", "WAF blocks from", &mut v).await;
+    burst(state, open, "waf_block", "ip", "waf-spike", t.waf_blocks, 10, 30, "info", "WAF blocks from", &mut v).await;
     burst(state, open, "http_5xx", "host", "http-5xx", t.http_5xx, 5, 15, "warning", "server errors on", &mut v).await;
     burst(state, open, "container_oom", "service", "container-oom", 1, 15, 15, "warning", "container out of memory:", &mut v).await;
     burst(state, open, "container_unhealthy", "service", "container-unhealthy", 1, 15, 15, "warning", "unhealthy container:", &mut v).await;
@@ -494,7 +499,20 @@ fn installer_ran_recently() -> bool {
 pub async fn tick(state: &Shared) -> Result<()> {
     let open = db::open_alerts(&state.db).await?;
     let open_keys: HashSet<String> = open.iter().map(|a| a.key.clone()).collect();
-    let observed = evaluate(state, &open_keys).await;
+    let mut observed = evaluate(state, &open_keys).await;
+    let t = thresholds(state).await;
+    let mut recently = state.notified.lock().await;
+    recently.retain(|_, at| at.elapsed().as_secs() < 3600);
+    for o in observed.iter_mut() {
+        // warnings only when wanted; infos only the two kinds that are about people
+        if o.notify && o.severity == "warning" && t.notify_min == "critical" {
+            o.notify = false;
+        }
+        // the same key is mailed at most once an hour, unless it is now critical
+        if o.notify && o.severity != "critical" && recently.contains_key(&o.key) {
+            o.notify = false;
+        }
+    }
     let mut pending = state.alert_pending.lock().await;
     let mut changes: Vec<Change> = Vec::new();
     let now = db::now();
@@ -506,6 +524,7 @@ pub async fn tick(state: &Shared) -> Result<()> {
                 db::touch_alert(&state.db, a.id, o.severity, &o.summary).await?;
                 if a.severity != o.severity && o.notify {
                     changes.push(Change { event: "opened".into(), key: o.key.clone(), severity: o.severity.into(), summary: o.summary.clone(), at: now.clone() });
+                    recently.insert(o.key.clone(), Instant::now());
                 }
             } else {
                 db::touch_alert(&state.db, a.id, o.severity, &o.summary).await?;
@@ -522,6 +541,7 @@ pub async fn tick(state: &Shared) -> Result<()> {
             tracing::warn!("alert opened: {} {}", o.severity, o.summary);
             if o.notify {
                 changes.push(Change { event: "opened".into(), key: o.key.clone(), severity: o.severity.into(), summary: o.summary.clone(), at: now.clone() });
+                recently.insert(o.key.clone(), Instant::now());
             }
         }
     }
@@ -531,11 +551,14 @@ pub async fn tick(state: &Shared) -> Result<()> {
             db::resolve_alert(&state.db, a.id).await?;
             tracing::info!("alert resolved: {}", a.summary);
             // conditions announce their end; point events just close
-            if a.severity != "info" && !point_events.remove(&a.key) {
+            let was_event = point_events.remove(&a.key);
+            let wanted = a.severity == "critical" || (a.severity == "warning" && t.notify_min != "critical");
+            if wanted && !was_event {
                 changes.push(Change { event: "resolved".into(), key: a.key.clone(), severity: a.severity.clone(), summary: a.summary.clone(), at: now.clone() });
             }
         }
     }
+    drop(recently);
     drop(point_events);
     drop(pending);
     if !changes.is_empty() {
@@ -589,5 +612,6 @@ mod tests {
     fn thresholds_merge_defaults() {
         let t: Thresholds = serde_json::from_str(r#"{"disk_warn": 70}"#).unwrap();
         assert_eq!((t.disk_warn, t.disk_crit), (70.0, 95.0));
+        assert!(!t.notify_ssh_login && t.notify_admin_actions && t.notify_min == "warning");
     }
 }

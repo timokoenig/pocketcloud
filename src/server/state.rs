@@ -42,6 +42,8 @@ pub struct State {
     pub journal_seen: std::sync::atomic::AtomicI64,
     /// consecutive failed route probes per host
     pub probe_failures: Mutex<HashMap<String, u32>>,
+    /// alert keys notified in the last hour (no repeats while flapping)
+    pub notified: Mutex<HashMap<String, std::time::Instant>>,
 }
 
 pub type Shared = Arc<State>;

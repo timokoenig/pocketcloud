@@ -46,10 +46,13 @@ containers started outside pocketcloud alert; the configuration is re-applied ev
 doing so alerts. The monitoring watches itself too: a silent journal collector, auditd not enabled, an AIDE
 check that failed or has not run for 36 hours, and failing deliveries all open alerts.
 
-Point events (an ssh login, a sensitive file change, a Falco event, a failed job) are told once and close
-silently; conditions (disk, a route down) announce their end. Every ssh login is mailed by default (one admin:
-every login is worth a line; *Alerts* can switch it off), as is every security-relevant interface action: a new
-or revoked VPN device, registry credentials, a WAF switched off, an app removed, a restore.
+What gets sent: criticals always; warnings by default (*Alerts* can restrict mail to criticals); infos never,
+with two exceptions you can switch: security-relevant interface actions (a new or revoked VPN device, registry
+credentials, a WAF switched off, an app removed, a restore; on by default) and ssh logins (off by default).
+Internet background noise (WAF blocks, bans, ssh brute force) is info and stays in the interface; fail2ban deals
+with it. Point events (a login, a file change, a Falco event, a failed job) are told once and close silently;
+conditions (disk, a route down) announce their end. The same alert is sent at most once an hour unless it
+escalates to critical, so a flapping condition cannot flood the inbox.
 
 Delivery is retried every minute until it works (capped at 200 changes); after three failures in a row the
 heartbeat is sent as `/fail`. The heartbeat itself is withheld while the checks error, the journal collector has
