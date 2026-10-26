@@ -82,6 +82,14 @@ left the package database half done. Newer versions start apt as a transient uni
 To repair by hand instead: `pocketcloud rescue <name> ssh`, then `sudo dpkg --configure -a` and
 `sudo apt-get -f install`.
 
+## Certificates are not renewed, the log says the challenge nameserver did not answer
+
+Let's Encrypt asks `_acme-challenge.<domain>`, which must be delegated to the server. Check from anywhere:
+`dig NS _acme-challenge.<domain>` must return `acme-ns.<domain>`, `dig A acme-ns.<domain>` the server's address,
+and while an order is open `dig TXT _acme-challenge.<domain>` the challenge values. If the first two are wrong,
+run `pocketcloud dns <name>` on your laptop. Port 53 must be open on the public address (the firewall rule is
+"acme challenge nameserver").
+
 ## A request to an app gets a 403 it should not
 
 The WAF blocked it. The server page lists blocked requests with client, request and transaction id; the matching

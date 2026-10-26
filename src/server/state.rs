@@ -7,16 +7,15 @@ use super::db::Db;
 use super::dns::InternalNames;
 use super::system::HostStatus;
 use crate::crypto::MasterKey;
-use crate::hetzner::Hetzner;
 
 pub struct State {
     pub config: Config,
     pub db: Db,
     pub key: MasterKey,
     pub docker: Option<bollard::Docker>,
-    /// DNS zone access (certificate challenge, public records); the server has no cloud token
-    pub dns_api: Hetzner,
     pub internal_names: InternalNames,
+    /// challenge values the public nameserver serves while a certificate order is open
+    pub acme_txt: super::dns::AcmeTxt,
     /// Public addresses of the server, read from its own interface
     pub public_ips: RwLock<Vec<String>>,
     pub reconcile_lock: Mutex<()>,

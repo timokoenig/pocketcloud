@@ -86,7 +86,7 @@ pub async fn run(args: SetupArgs) -> Result<()> {
     let hetzner = Hetzner::new(&secrets.hetzner_token);
 
     if inst.step == Step::Planned {
-        create(&mut inst, &hetzner, &args).await?;
+        create(&mut inst, &hetzner, &Hetzner::new(&secrets.dns_token), &args).await?;
         inst.step = Step::Created;
         inst.save()?;
     }
@@ -202,7 +202,7 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
     println!("  firewall    inbound 80, 443, {vpn_port}/udp, icmp; ssh 22 only from your address while setting up");
     println!("  domains     {}", domains.join(", "));
     println!("  interface   https://{interface_host} (VPN only)");
-    println!("  dns         {} and *.{} → server", domains.join(", "), domains.join(", *."));
+    println!("  dns         {} and *.{} → server; _acme-challenge delegated to the server (no DNS token on it)", domains.join(", "), domains.join(", *."));
     println!("  ssh         user {ssh_user}, key only, via VPN after setup");
     println!("  afterwards  backups, alerts, Falco and apps are configured in the interface");
     if !args.yes && !Confirm::with_theme(&theme()).with_prompt("Create this?").default(true).interact()? {
@@ -269,7 +269,6 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
         name: &inst.name,
         domains: &domains,
         interface_host: &interface_host,
-        dns_token: &dns_token,
         vpn_port,
         hub_private_key: &hub.private,
         device: &device,
@@ -307,7 +306,6 @@ struct ServerConfigInput<'a> {
     name: &'a str,
     domains: &'a [String],
     interface_host: &'a str,
-    dns_token: &'a str,
     vpn_port: u16,
     hub_private_key: &'a str,
     device: &'a str,
@@ -328,10 +326,6 @@ fn render_server_config(c: &ServerConfigInput) -> String {
 name = {name:?}
 domains = [{domains}]
 interface_host = {interface_host:?}
-
-[hetzner]
-# the only Hetzner credential on the server: zone access for the certificate challenge and the public records
-dns_token = {dns_token:?}
 
 [vpn]
 port = {vpn_port}
@@ -354,7 +348,6 @@ password_hash = {password_hash:?}
 "#,
         name = c.name,
         interface_host = c.interface_host,
-        dns_token = c.dns_token,
         vpn_port = c.vpn_port,
         hub_private_key = c.hub_private_key,
         device = c.device,
@@ -378,7 +371,6 @@ mod tests {
             name: "demo",
             domains: &["example.com".into(), "staging.example.com".into()],
             interface_host: "pocketcloud.example.com",
-            dns_token: "tok\"en",
             vpn_port: 51820,
             hub_private_key: "k=",
             device: "mac",
@@ -393,7 +385,7 @@ mod tests {
         });
         let c: crate::server::config::Config = toml::from_str(&s).unwrap();
         assert_eq!(c.domains.len(), 2);
-        assert_eq!(c.hetzner.dns_token(), "tok\"en");
+        assert!(c.hetzner.dns_token.is_empty(), "no DNS token on the server");
         assert_eq!(c.vpn.initial_peer.unwrap().ip, "10.8.0.2");
         assert_eq!(c.acme.environment, "staging");
         assert!(c.bootstrap_user.is_some());
@@ -421,7 +413,7 @@ pub fn firewall_rules(vpn_port: u16, ssh_from: Option<&str>) -> Vec<FirewallRule
     rules
 }
 
-async fn create(inst: &mut Installation, hetzner: &Hetzner, _args: &SetupArgs) -> Result<()> {
+async fn create(inst: &mut Installation, hetzner: &Hetzner, dns: &Hetzner, _args: &SetupArgs) -> Result<()> {
     step("Creating resources");
     let name = resource_name(&inst.name);
     let labels = labels(&inst.name);
@@ -464,6 +456,12 @@ async fn create(inst: &mut Installation, hetzner: &Hetzner, _args: &SetupArgs) -
     inst.server.ipv6 = server.ipv6();
     inst.save()?;
     ok(&format!("server {name} #{} at {}", server.id, inst.server.ipv4.clone().unwrap_or_default()));
+
+    // public records, from here with the DNS token; the server answers the certificate challenge itself
+    for l in crate::dnsrecords::apply(dns, &inst.domains, inst.server.ipv4.as_deref(), inst.server.ipv6.as_deref()).await? {
+        info(&l);
+    }
+    ok("dns records written");
 
     // complete the local client config with the address
     let path = inst.vpn_config_path()?;

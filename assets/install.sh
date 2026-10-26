@@ -162,8 +162,25 @@ log "pocketcloud files"
 install -m 0755 "$STAGE/pocketcloud" /usr/local/bin/pocketcloud.new
 mv -f /usr/local/bin/pocketcloud.new /usr/local/bin/pocketcloud
 [[ -f "$STAGE/config.toml" ]] && install -m 0600 "$STAGE/config.toml" /etc/pocketcloud/config.toml
-# older configs carried the cloud token; the server only needs zone access
-if grep -q '^token = ' /etc/pocketcloud/config.toml 2>/dev/null; then
+# the server needs no Hetzner credential at all any more: it answers the certificate challenge itself
+if grep -q '^\[hetzner\]' /etc/pocketcloud/config.toml 2>/dev/null; then
+  python3 - /etc/pocketcloud/config.toml <<'EOF'
+import sys
+p = sys.argv[1]; out = []; skip = False
+for line in open(p).read().splitlines():
+    t = line.strip()
+    if t == "[hetzner]":
+        skip = True
+        continue
+    if skip and t.startswith("["):
+        skip = False
+    if not skip:
+        out.append(line)
+open(p, "w").write("\n".join(out).rstrip() + "\n")
+EOF
+  log "removed the DNS token from the server config"
+fi
+if false; then
   python3 - /etc/pocketcloud/config.toml <<'EOF'
 import re, sys
 p = sys.argv[1]; s = open(p).read()

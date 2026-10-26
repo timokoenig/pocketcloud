@@ -2,7 +2,8 @@
 
 ## Perimeter
 
-Three things are reachable from the internet: Caddy on 80/443, WireGuard on its UDP port, and ICMP. The daemon
+Four things are reachable from the internet: Caddy on 80/443, WireGuard on its UDP port, the challenge
+nameserver on 53 (answers only `_acme-challenge.<domain>` and `acme-ns.<domain>`), and ICMP. The daemon
 alerts on any other listening socket (Postfix, which AIDE's package brings along, is confined to loopback). SSH is reachable
 only through the tunnel; the cloud firewall additionally drops it before it reaches the host, except while setup or
 rescue opens it for one address. The interface is a route on the WireGuard listener only. The name resolves publicly
@@ -34,10 +35,13 @@ reach each other or the host's services except through routes.
 
 ## Hetzner tokens
 
-The server holds one Hetzner credential: the token of the project with the DNS zones, which the certificate
-challenge and the public records need. The cloud token that can create, delete or re-firewall servers stays on
-the laptop in `~/.config/pocketcloud/<name>/`. Putting the zones in a project of their own keeps the server's
-token away from the server itself.
+The server holds no Hetzner credential. Both tokens, cloud and DNS, stay on the laptop in
+`~/.config/pocketcloud/<name>/`. Certificates still use the DNS-01 challenge, but the challenge name is delegated
+to the server: setup writes `_acme-challenge.<domain> NS acme-ns.<domain>` and `acme-ns.<domain> A/AAAA <server>`
+into the real zone once, and the daemon answers `_acme-challenge.<domain>` TXT queries itself on port 53 (rate
+limited, every other name refused). A root compromise can therefore forge certificates for the domain, which it
+already holds, and nothing else: MX, A and every other record of the real zone are out of reach. The A, AAAA
+and CAA records are written by setup and `pocketcloud dns <name>`.
 
 ## Detection
 

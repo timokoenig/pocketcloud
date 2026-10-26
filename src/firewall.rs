@@ -31,6 +31,7 @@ pub fn render(s: &FirewallSpec) -> String {
     out += "    ip6 nexthdr icmpv6 accept\n";
     out += &format!("    iifname \"{wan}\" tcp dport 22 accept comment \"public ssh, gated by the cloud firewall\"\n");
     out += &format!("    iifname \"{wan}\" tcp dport {{ 80, 443 }} accept comment \"caddy public\"\n");
+    out += &format!("    iifname \"{wan}\" meta l4proto {{ tcp, udp }} th dport 53 limit rate 50/second burst 100 packets accept comment \"acme challenge nameserver\"\n");
     out += &format!("    iifname \"{wan}\" udp dport {port} accept comment \"wireguard\"\n");
     out += &format!("    iifname \"wg0\" ip saddr {VPN_FULL_CIDR} accept comment \"vpn full scope\"\n");
     out += &format!("    iifname \"wg0\" ip saddr {VPN_WEB_CIDR} ip daddr {HUB_IP} tcp dport 443 accept comment \"vpn web scope: interface and internal routes\"\n");
@@ -102,6 +103,7 @@ mod tests {
         assert!(s.contains("iifname \"pc-api\" oifname \"eth0\" tcp dport { 587, 443 } accept"));
         assert!(!s.contains("iifname \"pc-db\" oifname \"eth0\""));
         assert!(s.contains("udp dport 51820"));
+        assert!(s.contains("th dport 53 limit rate"));
     }
 
     #[test]

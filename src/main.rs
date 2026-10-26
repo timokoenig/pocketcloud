@@ -2,6 +2,7 @@ mod backup_cli;
 mod cli;
 mod cloudinit;
 mod crypto;
+mod dnsrecords;
 mod firewall;
 mod hetzner;
 mod install;
@@ -31,6 +32,7 @@ fn main() -> anyhow::Result<()> {
             cli::Command::Upgrade(a) => upgrade::run(a).await,
             cli::Command::Vpn(a) => setup::vpn(a).await,
             cli::Command::Backup(a) => backup_cli::run(a).await,
+            cli::Command::Dns(a) => dnsrecords::run(a).await,
             cli::Command::HashPassword { password } => {
                 println!("{}", crypto::hash_password(&password)?);
                 Ok(())

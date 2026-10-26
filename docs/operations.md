@@ -124,6 +124,12 @@ The snapshot list on the pages is refreshed after each backup and by the button.
 Note: the server holds credentials that can delete snapshots, since it prunes them. Keep that in mind when
 choosing the bucket's project.
 
+## DNS
+
+The real zone is only ever written from your laptop: by setup, and by `pocketcloud dns <name>` after a rebuild
+changed the address. The server answers `_acme-challenge.<domain>` itself for certificate renewals and holds no
+DNS token.
+
 ## Updates
 
 - Setup installs every pending package before the daemon starts and reboots once if the kernel changed.

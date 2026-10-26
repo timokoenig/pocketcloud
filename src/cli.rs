@@ -25,6 +25,8 @@ pub enum Command {
     Vpn(VpnArgs),
     /// Derive the restic password from the recovery phrase, for a restore without pocketcloud
     Backup(BackupArgs),
+    /// (Re)write the public DNS records of an installation from this machine, e.g. after a rebuild
+    Dns(DnsArgs),
     /// Print the argon2 hash of a password (for config files)
     #[command(hide = true)]
     HashPassword { password: String },
@@ -79,6 +81,8 @@ pub enum ServerCommand {
     Restore { app: String, snapshot: String },
     /// Send a test notification through the configured channels
     NotifyTest,
+    /// Request new certificates now and wait (same job the interface starts)
+    Renew,
 }
 
 #[derive(Args)]
@@ -132,6 +136,12 @@ pub struct BackupArgs {
 pub enum BackupCommand {
     /// Print the restic password derived from the recovery phrase, for restores without pocketcloud
     Password,
+}
+
+#[derive(Args)]
+pub struct DnsArgs {
+    /// Name of the installation
+    pub name: String,
 }
 
 #[derive(Args)]

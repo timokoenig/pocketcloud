@@ -24,7 +24,6 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::cli::{ServerArgs, ServerCommand};
 use crate::crypto::MasterKey;
-use crate::hetzner::Hetzner;
 use config::Config;
 use state::{Shared, State};
 
@@ -46,6 +45,21 @@ pub async fn run(args: ServerArgs) -> Result<()> {
             let redact = deploy::secret_values(&state, a.id).await?;
             let app_id = a.id;
             let id = jobs::spawn(&state, "restore", Some(a.id), redact, move |s, log| backup::restore_app(s, app_id, snapshot, log)).await?;
+            wait_for_job(&state, id).await
+        }
+        ServerCommand::Renew => {
+            let state = build_state(config).await?;
+            let id = jobs::spawn(&state, "certificates", None, vec![], |s, log| async move {
+                for d in &s.config.domains {
+                    let _ = std::fs::remove_file(s.config.certs_dir().join(d).join("fullchain.pem"));
+                    log.line(format!("renewing {d}")).await;
+                }
+                if reconcile::ensure_certificates(&s).await? {
+                    reconcile::apply(&s).await?;
+                }
+                Ok(())
+            })
+            .await?;
             wait_for_job(&state, id).await
         }
         ServerCommand::NotifyTest => {
@@ -125,14 +139,13 @@ async fn build_state(config: Config) -> Result<Shared> {
         }
     }
     let docker = if config.dev { None } else { docker::connect().ok() };
-    let dns_api = Hetzner::new(config.hetzner.dns_token());
     // every process that may reconcile needs the public addresses, not only the daemon
     let public_ips = if config.dev { vec!["127.0.0.1".into()] } else { system::local_public_ips().await.unwrap_or_default() };
     Ok(Arc::new(State {
         db,
         key,
         docker,
-        dns_api,
+        acme_txt: dns::AcmeTxt::default(),
         internal_names: Default::default(),
         public_ips: RwLock::new(public_ips),
         reconcile_lock: Mutex::new(()),
@@ -230,12 +243,33 @@ async fn daemon(config: Config) -> Result<()> {
         }
     });
 
-    // dns records, certificates, then the apps
+    // the challenge nameserver on the public addresses, then certificates
     let st = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = reconcile::ensure_dns_records(&st).await {
-            tracing::error!("dns records: {e:#}");
+        if st.config.dev {
+            return;
         }
+        let ips: Vec<std::net::IpAddr> = loop {
+            let ips: Vec<std::net::IpAddr> = st.public_ips.read().await.iter().filter_map(|i| i.parse().ok()).collect();
+            if !ips.is_empty() {
+                break ips;
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        };
+        let zone = dns::PublicZone { domains: st.config.domains.clone(), ips: ips.clone(), txt: st.acme_txt.clone() };
+        let binds: Vec<std::net::SocketAddr> = ips.iter().map(|ip| std::net::SocketAddr::new(*ip, 53)).collect();
+        loop {
+            if let Err(e) = dns::serve_public(zone.clone(), binds.clone()).await {
+                tracing::error!("challenge nameserver: {e:#}");
+            }
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        }
+    });
+
+    // certificates, then the apps
+    let st = state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(3)).await;
         loop {
             match reconcile::ensure_certificates(&st).await {
                 Ok(true) => {

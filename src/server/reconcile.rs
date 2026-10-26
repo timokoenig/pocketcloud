@@ -87,33 +87,6 @@ pub async fn hub_config(state: &State) -> Result<String> {
     Ok(wireguard::hub_config(&state.config.vpn.hub_private_key, state.config.vpn.port, &peers))
 }
 
-/// Public DNS: the domain and its wildcard point at the server.
-pub async fn ensure_dns_records(state: &Shared) -> Result<()> {
-    let ips = state.public_ips.read().await.clone();
-    let v4: Vec<String> = ips.iter().filter(|i| !i.contains(':')).cloned().collect();
-    let v6: Vec<String> = ips.iter().filter(|i| i.contains(':')).cloned().collect();
-    for d in &state.config.domains {
-        let zone = state.dns_api.zone_for(d).await?;
-        for name in [d.clone(), format!("*.{d}")] {
-            let rel = crate::hetzner::relative_name(&name, &zone.name);
-            if !v4.is_empty() {
-                state.dns_api.rrset_set(&zone.name, &rel, "A", 300, &v4).await?;
-            }
-            if !v6.is_empty() {
-                state.dns_api.rrset_set(&zone.name, &rel, "AAAA", 300, &v6).await?;
-            }
-        }
-        // CAA: only Let's Encrypt may issue for the domain; left alone when one exists already
-        let rel = crate::hetzner::relative_name(d, &zone.name);
-        if state.dns_api.rrset(&zone.name, &rel, "CAA").await?.is_none() {
-            state.dns_api.rrset_set(&zone.name, &rel, "CAA", 3600, &["0 issue \"letsencrypt.org\"".to_string()]).await?;
-            tracing::info!("dns: CAA record for {d} limits issuance to Let's Encrypt");
-        }
-        tracing::info!("dns: {d} and *.{d} -> {}", ips.join(", "));
-    }
-    Ok(())
-}
-
 /// Issue or renew the wildcard certificate of every domain when needed. Returns true when something changed.
 pub async fn ensure_certificates(state: &Shared) -> Result<bool> {
     let mut changed = false;
@@ -141,7 +114,8 @@ pub async fn ensure_certificates(state: &Shared) -> Result<bool> {
             &state.config.certs_dir(),
             &state.config.acme.email,
             state.config.acme.directory_url(),
-            &state.dns_api,
+            &state.acme_txt,
+            state.public_ips.read().await.iter().find_map(|i| i.parse().ok()),
         )
         .await
         {

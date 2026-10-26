@@ -1,4 +1,5 @@
-//! Wildcard certificates from Let's Encrypt with the DNS-01 challenge in Hetzner DNS.
+//! Wildcard certificates from Let's Encrypt with the DNS-01 challenge answered by the daemon's own nameserver:
+//! `_acme-challenge.<domain>` is delegated to the server, so no DNS token is needed.
 use anyhow::{anyhow, bail, Context, Result};
 use instant_acme::{
     Account, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier, NewAccount, NewOrder, OrderStatus, RetryPolicy,
@@ -6,8 +7,7 @@ use instant_acme::{
 use std::path::Path;
 use std::time::Duration;
 
-use crate::hetzner::{relative_name, txt_value, Hetzner};
-use crate::server::dns;
+use crate::server::dns::{self, AcmeTxt};
 
 pub struct Issued {
     pub not_after: chrono::DateTime<chrono::Utc>,
@@ -36,13 +36,10 @@ async fn account(acme_dir: &Path, email: &str, directory: &str) -> Result<Accoun
 }
 
 /// Obtain `domain` + `*.domain`, write fullchain.pem and key.pem into certs_dir/<domain>/.
-pub async fn issue(domain: &str, acme_dir: &Path, certs_dir: &Path, email: &str, directory: &str, dns_api: &Hetzner) -> Result<Issued> {
+pub async fn issue(domain: &str, acme_dir: &Path, certs_dir: &Path, email: &str, directory: &str, txt: &AcmeTxt, public_ip: Option<std::net::IpAddr>) -> Result<Issued> {
     let account = account(acme_dir, email, directory).await?;
     let identifiers = [Identifier::Dns(domain.to_string()), Identifier::Dns(format!("*.{domain}"))];
     let mut order = account.new_order(&NewOrder::new(&identifiers)).await.context("new order")?;
-
-    let zone = dns_api.zone_for(domain).await?;
-    let record_name = relative_name(&format!("_acme-challenge.{domain}"), &zone.name);
 
     // both identifiers (domain and *.domain) challenge the same TXT name, so all values go into one record set
     let mut values = Vec::new();
@@ -61,10 +58,9 @@ pub async fn issue(domain: &str, acme_dir: &Path, certs_dir: &Path, email: &str,
     }
 
     if !values.is_empty() {
-        let txt: Vec<String> = values.iter().map(|v| txt_value(v)).collect();
-        dns_api.rrset_set(&zone.name, &record_name, "TXT", 60, &txt).await.context("set challenge record")?;
-        tracing::info!("acme: challenge record set for {domain}, waiting for the nameservers");
-        wait_for_txt(&zone, &format!("_acme-challenge.{domain}"), &values).await?;
+        txt.set(domain, values.clone()).await;
+        tracing::info!("acme: challenge values for {domain} are being served");
+        self_check(domain, &values, public_ip).await;
         {
             let mut authorizations = order.authorizations();
             while let Some(a) = authorizations.next().await {
@@ -78,7 +74,7 @@ pub async fn issue(domain: &str, acme_dir: &Path, certs_dir: &Path, email: &str,
             }
         }
         let status = order.poll_ready(&RetryPolicy::default()).await;
-        let _ = dns_api.rrset_delete(&zone.name, &record_name, "TXT").await;
+        txt.clear(domain).await;
         match status.context("waiting for the order")? {
             OrderStatus::Ready | OrderStatus::Valid => {}
             s => bail!("acme order not ready: {s:?} (challenge failed)"),
@@ -102,41 +98,17 @@ pub async fn issue(domain: &str, acme_dir: &Path, certs_dir: &Path, email: &str,
     Ok(Issued { not_after })
 }
 
-async fn wait_for_txt(zone: &crate::hetzner::Zone, name: &str, expected: &[String]) -> Result<()> {
-    let servers = zone.authoritative_nameservers.as_ref().map(|a| a.assigned.clone()).unwrap_or_default();
-    let mut addrs = Vec::new();
-    for s in &servers {
-        if let Ok(a) = dns::resolve_host(s.trim_end_matches('.')).await {
-            addrs.extend(a.into_iter().filter(|a| a.is_ipv4()).take(1));
+/// Ask our own public listener once, so a broken delegation shows in the log before Let's Encrypt complains.
+async fn self_check(domain: &str, expected: &[String], public_ip: Option<std::net::IpAddr>) {
+    let Some(ip) = public_ip else { return };
+    let name = format!("_acme-challenge.{domain}");
+    for _ in 0..5 {
+        match dns::query_txt(std::net::SocketAddr::new(ip, 53), &name).await {
+            Ok(vals) if expected.iter().all(|e| vals.contains(e)) => return,
+            _ => tokio::time::sleep(Duration::from_secs(1)).await,
         }
     }
-    if addrs.is_empty() {
-        tracing::warn!("acme: no authoritative nameservers known for {}, waiting 60s blind", zone.name);
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        return Ok(());
-    }
-    for attempt in 0..60 {
-        let mut all_ok = true;
-        for a in &addrs {
-            match dns::query_txt(*a, name).await {
-                Ok(vals) if expected.iter().all(|e| vals.contains(e)) => {}
-                _ => {
-                    all_ok = false;
-                    break;
-                }
-            }
-        }
-        if all_ok {
-            // a little extra for Let's Encrypt's own resolvers
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            return Ok(());
-        }
-        if attempt % 10 == 9 {
-            tracing::info!("acme: still waiting for {name} on the nameservers");
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-    bail!("challenge record did not appear on the authoritative nameservers in time")
+    tracing::warn!("acme: the challenge nameserver on {ip}:53 did not answer for {name}; is port 53 open and the NS delegation in place?");
 }
 
 pub fn not_after(pem_chain: &str) -> Result<chrono::DateTime<chrono::Utc>> {

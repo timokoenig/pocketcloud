@@ -18,6 +18,8 @@ pub struct Config {
     /// Local address the daemon's HTTP listens on; Caddy proxies the interface host to it
     #[serde(default = "default_listen")]
     pub listen: String,
+    /// Older configs carried a DNS token here; the server needs none since the challenge is answered by itself
+    #[serde(default)]
     pub hetzner: HetznerConfig,
     pub vpn: VpnConfig,
     pub acme: AcmeConfig,
@@ -43,7 +45,7 @@ fn default_listen() -> String {
     "127.0.0.1:7788".into()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HetznerConfig {
     /// Token of the project that holds the DNS zones. The only Hetzner credential the server holds: it needs it
     /// for the certificate challenge and the public records, nothing else. The cloud token stays on the laptop.
@@ -58,15 +60,6 @@ pub struct HetznerConfig {
     pub firewall_id: i64,
 }
 
-impl HetznerConfig {
-    pub fn dns_token(&self) -> &str {
-        if self.dns_token.is_empty() {
-            &self.token
-        } else {
-            &self.dns_token
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VpnConfig {
