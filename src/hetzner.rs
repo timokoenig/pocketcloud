@@ -497,6 +497,31 @@ impl Hetzner {
         let _: Value = self.request(reqwest::Method::DELETE, &format!("/zones/{zone}/rrsets/{name}/{rtype}"), None).await?;
         Ok(())
     }
+
+    // ---- teardown ----
+
+    /// Detach the firewall from a server; needed before the firewall can be deleted.
+    pub async fn firewall_remove_from_server(&self, firewall: i64, server: i64) -> Result<()> {
+        let _: Value = self
+            .post(&format!("/firewalls/{firewall}/actions/remove_from_resources"), json!({"remove_from": [{"type": "server", "server": {"id": server}}]}))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_firewall(&self, id: i64) -> Result<()> {
+        let _: Value = self.request(reqwest::Method::DELETE, &format!("/firewalls/{id}"), None).await?;
+        Ok(())
+    }
+
+    pub async fn delete_ssh_key(&self, id: i64) -> Result<()> {
+        let _: Value = self.request(reqwest::Method::DELETE, &format!("/ssh_keys/{id}"), None).await?;
+        Ok(())
+    }
+
+    pub async fn delete_server(&self, id: i64) -> Result<()> {
+        let _: Value = self.request(reqwest::Method::DELETE, &format!("/servers/{id}"), None).await?;
+        Ok(())
+    }
 }
 
 /// Record set name relative to the zone: "@" for the zone itself, "*" for its wildcard, "api.staging" for deeper names.

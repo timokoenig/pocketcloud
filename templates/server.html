@@ -84,4 +84,21 @@
     </div>
   </div>
 </div>
+<div class="card danger" style="margin-top:20px">
+  <div class="card-head"><div><div class="card-title">Tear down this server</div><div class="card-desc">Removes every app with its volumes, wipes the server's state and master key, and powers it off. With a Hetzner token it also deletes the DNS records, the firewall, the ssh key and the server itself; tokens are used once and never stored. Backup snapshots in the bucket stay.</div></div></div>
+  <div class="card-body">
+    <details class="disclosure danger">
+      <summary>Tear down {{ base.name }}</summary>
+      <div class="content">
+        <form method="post" action="/server/teardown" autocomplete="off" class="form-grid" data-confirm="Tear down {{ base.name }}? Apps, data and the server's keys are deleted. This cannot be undone.">
+          <label class="field span-2"><span>Recovery phrase <span class="hint">the 24 words, the proof that this is you</span></span><textarea name="phrase" rows="2" class="code" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+          <label class="field"><span>Hetzner Cloud token <span class="hint">optional: also deletes server, firewall and key</span></span><textarea name="cloud_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+          <label class="field"><span>Hetzner DNS token <span class="hint">optional: the cloud token when empty</span></span><textarea name="dns_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+          <label class="field"><span>Type <code>{{ base.name }}</code> to confirm</span><input name="confirm" required autocomplete="off" class="confirm-input"></label>
+          <div class="field" style="justify-content:flex-end"><div><button class="btn btn-destructive">Tear down</button></div></div>
+        </form>
+      </div>
+    </details>
+  </div>
+</div>
 {% endblock %}

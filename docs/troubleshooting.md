@@ -136,7 +136,8 @@ Nothing on your devices is irreplaceable; the recovery phrase is. The way back:
 3. `umount /mnt`, disable the rescue system in the console, reboot. Once pocketcloud has started, the new device
    connects and the interface is back.
 
-Console access alone is not enough on purpose: without the phrase, `recover` does nothing.
+Console access alone is not enough on purpose: without the phrase, `recover` does nothing. The same phrase is
+what *Tear down* on the Server page asks for, see operations.md.
 
 ## Locked out: no tunnel, no ssh
 

@@ -14,6 +14,7 @@ pub mod notify;
 pub mod reconcile;
 pub mod state;
 pub mod system;
+pub mod teardown;
 pub mod upgrade;
 pub mod web;
 

@@ -922,6 +922,40 @@ pub async fn reboot(State(state): State<Shared>, user: User, Form(f): Form<Confi
     Ok(back("/server", Some("rebooting; apps come back on their own, the interface in about a minute"), None))
 }
 
+#[derive(Deserialize)]
+pub struct TeardownForm {
+    phrase: String,
+    #[serde(default)]
+    cloud_token: String,
+    #[serde(default)]
+    dns_token: String,
+    confirm: String,
+}
+
+/// The recovery phrase is the proof: the master key never leaves the server, so only its owner can produce it.
+pub async fn teardown(State(state): State<Shared>, user: User, Form(f): Form<TeardownForm>) -> R {
+    if f.confirm.trim() != state.config.name {
+        return Ok(back("/server", None, Some("type the installation name to confirm")));
+    }
+    let key = match crate::crypto::MasterKey::from_phrase(&f.phrase) {
+        Ok(k) => k,
+        Err(_) => return Ok(back("/server", None, Some("that is not a valid recovery phrase"))),
+    };
+    if key.to_hex().as_str() != state.key.to_hex().as_str() {
+        db::audit(&state.db, &user.username, "server.teardown.refused", "phrase mismatch").await?;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        return Ok(back("/server", None, Some("the phrase does not match this server's master key")));
+    }
+    db::audit(&state.db, &user.username, "server.teardown", "").await?;
+    let non_empty = |s: String| if s.trim().is_empty() { None } else { Some(s.trim().to_string()) };
+    let tokens = crate::server::teardown::Tokens { cloud: non_empty(f.cloud_token), dns: non_empty(f.dns_token) };
+    let redact: Vec<String> = tokens.cloud.iter().chain(tokens.dns.iter()).cloned().collect();
+    match jobs::spawn(&state, "teardown", None, redact, move |s, log| crate::server::teardown::teardown_job(s, tokens, log)).await {
+        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
+        Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
+    }
+}
+
 pub async fn renew_certificates(State(state): State<Shared>, user: User) -> R {
     db::audit(&state.db, &user.username, "server.renew_certificates", "").await?;
     let job = jobs::spawn(&state, "certificates", None, vec![], |s, log| async move {

@@ -20,6 +20,8 @@ manage compose apps from a web interface that is reachable through WireGuard onl
   (notifications, VPN devices, ssh keys, registries, account); everything after setup is managed there.
 - **Recovery**: lost every device? Hetzner's rescue system and `pocketcloud recover` with the 24 words give you a
   new device and, if needed, a new password. Lost the server? Setup again with the same phrase, then restore.
+  Done with it? *Tear down* on the Server page, proven by the phrase, removes apps, keys and optionally the
+  server and DNS records.
 
 Guides: [docs/setup.md](docs/setup.md), [docs/apps.md](docs/apps.md),
 [docs/operations.md](docs/operations.md), [docs/troubleshooting.md](docs/troubleshooting.md), [docs/security.md](docs/security.md).

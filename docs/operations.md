@@ -129,6 +129,21 @@ The snapshot list on the pages is refreshed after each backup and by the button.
 Note: the server holds credentials that can delete snapshots, since it prunes them. Keep that in mind when
 choosing the bucket's project.
 
+## Teardown
+
+*Tear down this server* at the bottom of the Server page ends an installation. It asks for the recovery phrase,
+which is the proof of ownership (the master key never leaves the server, so only its owner can produce it), and
+the installation name. Then, as a job you can watch until the tunnel drops: a critical notification goes out
+first; every app is removed with its volumes; with a Hetzner DNS token the records setup wrote (the domain and
+wildcard, `acme-ns`, the `_acme-challenge` delegation, the CAA record) are deleted, as far as they still point at
+this server; with a Hetzner Cloud token the firewall and ssh key are deleted and, last of all, the server itself.
+Independent of the tokens, a transient unit outside the daemon's sandbox then shreds the master key, deletes
+`/etc/pocketcloud`, `/var/lib/pocketcloud`, the WireGuard and Caddy configuration, and powers the machine off.
+
+Tokens are used once in memory and never stored; revoke them afterwards. Without them, delete the powered-off
+server and the DNS records in the Hetzner console; the disk holds nothing usable. Backup snapshots stay in the
+bucket, and the recovery phrase plus the bucket credentials still restore them into a new installation.
+
 ## What lives on your laptop
 
 Nothing. Setup deletes its run directory when it completes. The CLI on your computer is only needed to set up a
