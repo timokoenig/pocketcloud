@@ -1,0 +1,72 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Server</h1><p class="desc">Backups</p></div>
+  {% if backup.enabled %}<div class="actions">
+    <form method="post" action="/server/snapshots" class="inline"><button class="btn">Refresh snapshots</button></form>
+    <form method="post" action="/server/backup" class="inline"><button class="btn btn-primary">Back up now</button></form>
+  </div>{% endif %}
+</div>
+{% include "_tabs_server.html" %}
+{% if backup.enabled %}
+{% if !backup.last_error.is_empty() %}<div class="alert err"><div class="body"><div class="title">Last run failed</div>{{ backup.last_error }}</div></div>{% endif %}
+<div class="stats">
+  <div class="stat"><div class="label">Last success</div><div class="value" style="font-size:20px">{{ backup.last_ok }}</div>{% if !backup.last_snapshot.is_empty() %}<div class="sub mono">{{ backup.last_snapshot }}</div>{% endif %}</div>
+  <div class="stat"><div class="label">Snapshots</div><div class="value">{% if backup.snapshots.is_empty() %}0{% else %}{{ backup.snapshots }}{% endif %}</div><div class="sub">{% if backup.size.is_empty() %}kept 30 days{% else %}{{ backup.size }} · kept 30 days{% endif %}</div></div>
+  <div class="stat"><div class="label">Schedule</div><div class="value" style="font-size:20px">nightly {{ backup.time }}</div><div class="sub">server time · check on Sundays</div></div>
+  <div class="stat"><div class="label">Last check</div><div class="value" style="font-size:20px">{{ backup.last_check }}</div></div>
+</div>
+<div class="stack">
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Repository</div></div></div>
+  <div class="card-body">
+    <dl class="kv">
+      <dt>Location</dt><dd class="mono">{{ backup.repo }}</dd>
+      <dt>Contents</dt><dd>The pocketcloud database, the server config, and for every app with backups on: volumes, files and a dump of each postgres or mysql service. Never the master key.</dd>
+      <dt>Password</dt><dd><code>pocketcloud restic-password</code> derives it from the recovery phrase.</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="card danger">
+  <div class="card-head"><div><div class="card-title">Restore apps from a snapshot</div><div class="card-desc">For a rebuilt server set up with the old recovery phrase: imports and deploys every app of the snapshot that does not exist here, with its data. Existing apps are left alone; restore their data from their own page.</div></div></div>
+  <div class="card-body">
+    {% if snapshots.is_empty() %}<p class="muted">No snapshot list yet; press <em>Refresh snapshots</em>.</p>{% else %}
+    <form method="post" action="/server/restore" class="form-row">
+      <label class="field grow"><span>Snapshot</span><select name="snapshot">{% for s in snapshots %}<option value="{{ s.id }}">{{ s.time }} · {{ s.id }}</option>{% endfor %}</select></label>
+      <label class="field"><span>Type <code>restore</code> to confirm</span><input name="confirm" required autocomplete="off" class="confirm-input"></label>
+      <div class="field fixed"><button class="btn btn-destructive">Restore</button></div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<details class="disclosure">
+  <summary>Settings <span class="hint">S3 credentials, schedule, switch off</span></summary>
+  <div class="content">
+{% else %}
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Set up backups</div><div class="card-desc">Create a bucket and S3 credentials in Hetzner Object Storage. Every night restic stores the database, the server config and every app's data there, encrypted with a key derived from the master key. Snapshots are kept 30 days.</div></div></div>
+  <div class="card-body">
+{% endif %}
+    <form method="post" action="/server/backup-settings" class="form-grid" autocomplete="off">
+      <label class="field span-2"><span>S3 endpoint</span><input name="s3_endpoint" value="{{ backup_form.s3_endpoint }}" required class="mono"></label>
+      <label class="field"><span>Bucket</span><input name="bucket" value="{{ backup_form.bucket }}" required class="mono"></label>
+      <label class="field"><span>Access key</span><input name="access_key" value="{{ backup_form.access_key }}" required autocomplete="off" class="mono"></label>
+      <label class="field"><span>Secret key{% if backup_form.has_secret %} <span class="hint">set; leave empty to keep</span>{% endif %}</span><textarea name="secret_key" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+      <label class="field"><span>Hour of the nightly run <span class="hint">server time</span></span><input name="hour" type="number" min="0" max="23" value="{{ backup_form.hour }}"></label>
+      <div class="field" style="justify-content:flex-end"><div><button class="btn btn-primary">{% if backup.enabled %}Save{% else %}Enable backups{% endif %}</button></div></div>
+    </form>
+{% if backup.enabled %}
+    <form method="post" action="/server/backup-disable" class="form-row" style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
+      <label class="field"><span>Type <code>disable</code> to switch backups off</span><input name="confirm" class="confirm-input" required autocomplete="off"></label>
+      <div class="field fixed"><button class="btn btn-danger">Disable</button></div>
+    </form>
+  </div>
+</details>
+</div>
+{% else %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

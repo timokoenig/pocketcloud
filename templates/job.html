@@ -1,8 +1,11 @@
 {% extends "layout.html" %}
 {% block head %}{% if running %}<meta http-equiv="refresh" content="2">{% endif %}{% endblock %}
 {% block content %}
-<p>{% if let Some(a) = app_id %}<a href="/apps/{{ a }}">← {{ app_name }}</a>{% else %}<a href="/server">← server</a>{% endif %}</p>
-<h1>{{ kind }} #{{ id }} <span class="status {{ status }}">{{ status }}</span></h1>
-<p class="muted small">started {{ created }}{% if !finished.is_empty() %} · finished {{ finished }}{% endif %}{% if running %} · refreshing{% endif %}</p>
+<div class="crumbs">{% if let Some(a) = app_id %}<a href="/">Apps</a><span>/</span><a href="/apps/{{ a }}">{{ app_name }}</a>{% else %}<a href="/server">Server</a>{% endif %}<span>/</span><span>{{ kind }} #{{ id }}</span></div>
+<div class="page-head">
+  <div><h1>{{ kind }} <span class="muted" style="font-weight:400">#{{ id }}</span> <span class="badge {{ status }}">{{ status }}</span></h1>
+  <p class="desc">Started {{ created }}{% if !finished.is_empty() %} · finished {{ finished }}{% endif %}{% if running %} · refreshing every 2 s{% endif %}</p></div>
+  <div class="actions">{% if let Some(a) = app_id %}<a class="btn" href="/apps/{{ a }}/history">History</a>{% endif %}</div>
+</div>
 <pre class="log" id="log">{{ log }}</pre>
 {% endblock %}

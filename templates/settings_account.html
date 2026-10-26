@@ -1,0 +1,18 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Settings</h1><p class="desc">Account</p></div>
+</div>
+{% include "_tabs_settings.html" %}
+<div class="card" style="max-width:520px">
+  <div class="card-head"><div><div class="card-title">Change password</div><div class="card-desc">Signed in as <strong>{{ base.user }}</strong>. At least 12 characters.</div></div></div>
+  <div class="card-body">
+    <form method="post" action="/account/password" class="stack" autocomplete="off" style="--gap:16px">
+      <label class="field"><span>Current password</span><input name="current" type="password" required autocomplete="current-password"></label>
+      <label class="field" style="margin-top:16px"><span>New password</span><input name="new" type="password" required minlength="12" autocomplete="new-password"></label>
+      <label class="field" style="margin-top:16px"><span>Repeat new password</span><input name="repeat" type="password" required autocomplete="new-password"></label>
+      <div style="margin-top:20px"><button class="btn btn-primary">Change password</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

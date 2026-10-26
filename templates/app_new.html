@@ -1,12 +1,23 @@
 {% extends "layout.html" %}
 {% block content %}
-<h1>New app</h1>
-<form method="post" action="/apps/new" class="stack">
-  <label>Name <input name="name" value="{{ name }}" pattern="[a-z0-9-]{1,32}" required placeholder="shop"> <span class="muted small">a-z, 0-9, dashes; also the compose project name</span></label>
-  <label>Compose file
-    <textarea name="compose" rows="24" spellcheck="false" required>{{ compose }}</textarea>
-  </label>
-  <p class="muted small">Published <code>ports</code> are removed (keep them or an <code>expose</code> line, the route form reads the container port from there), every service gets a static address in the app's own network and the app's secrets as environment variables. <code>${NAME}</code> in the file is replaced by the secret NAME. Not allowed: <code>build</code>, <code>privileged</code>, host paths, host networking, extra networks. Files the compose file references with <code>./</code> live in the app directory on the server.</p>
-  <button class="primary">Create</button>
+<div class="crumbs"><a href="/">Apps</a><span>/</span><span>New app</span></div>
+<div class="page-head"><div><h1>New app</h1><p class="desc">Nothing runs until you deploy; routes and secrets come after creating.</p></div></div>
+<form method="post" action="/apps/new" class="card">
+  <div class="card-body stack">
+    <label class="field" style="max-width:320px"><span>Name <span class="hint">a-z, 0-9, dashes; also the compose project name</span></span><input name="name" value="{{ name }}" pattern="[a-z0-9-]{1,32}" required placeholder="shop" class="mono"></label>
+    <label class="field"><span>Compose file</span><textarea name="compose" rows="24" spellcheck="false" required class="code">{{ compose }}</textarea></label>
+    <details class="disclosure">
+      <summary>What the server does with the file</summary>
+      <div class="content small">
+        <ul class="bullets">
+          <li>Published <code>ports</code> are removed; keep them or an <code>expose</code> line so the route form knows the container port.</li>
+          <li>Every service gets a static address in the app's own network and the app's secrets as environment variables; <code>${NAME}</code> is replaced by the secret NAME.</li>
+          <li>Not allowed: <code>build</code>, <code>privileged</code>, host paths, host networking, extra networks.</li>
+          <li>Files referenced with <code>./</code> live in the app directory on the server.</li>
+        </ul>
+      </div>
+    </details>
+  </div>
+  <div class="card-foot row end"><a class="btn btn-ghost" href="/">Cancel</a><button class="btn btn-primary">Create app</button></div>
 </form>
 {% endblock %}

@@ -6,7 +6,7 @@ Devices are managed under *VPN*. Creating one shows the WireGuard config and a Q
 key is generated on the server and not stored. Revoking a device closes its tunnel immediately. The last device
 cannot be removed from the interface.
 
-The device from setup got its config at the end of setup; further devices come from the VPN page as files or QR codes.
+The device from setup got its config at the end of setup; further devices come from Settings → VPN devices as files or QR codes.
 
 While the tunnel is active all DNS of the device goes through the server, which answers internal names with
 `10.8.0.1` and forwards everything else to Hetzner's resolvers.
@@ -17,7 +17,7 @@ While the tunnel is active all DNS of the device goes through the server, which 
 ssh admin@10.8.0.1
 ```
 
-with the tunnel active and a key you added under *SSH keys* on the server page. Without any key there, nobody
+with the tunnel active and a key you added under Settings → SSH keys. Without any key there, nobody
 can log in, which is the state right after setup.
 
 ## Monitoring and alerts
@@ -38,7 +38,7 @@ Notifications are configured on the *Alerts* page (e-mail over SMTP, a webhook, 
 sealed with the master key. A `[notify]` section in the config file seeds them on first start, nothing more. Opened and resolved alerts are collected for a minute and sent as one message with the worst thing in
 the subject. `heartbeat_url` is pinged every five minutes while the daemon runs, for a dead man's switch service
 (healthchecks.io style) that tells you when the server itself is gone, the one thing it cannot report.
-*Send test notification* on the Alerts page and `sudo pocketcloud server notify-test` prove the channels.
+*Send test notification* under Settings → Notifications and `sudo pocketcloud server notify-test` prove the channels.
 
 Live-state checks catch "up but not what the database says": every route of a running app is fetched through
 Caddy once a minute and three failures in a row alert; listening sockets outside the expected set alert;
@@ -66,11 +66,11 @@ packages from third-party repositories (Docker, Caddy, Falco, Trivy) are not ins
 open a warning until Server → Upgrade.
 
 Falco is the Falco package with the eBPF probe, writing JSON events to `/var/log/infra/falco.jsonl`; the
-switch on the server page starts or stops its service within a minute. It costs about 150 MB.
+switch under Server → Security starts or stops its service within a minute. It costs about 150 MB.
 
 ## What an upgrade applies
 
-*Upgrade* on the server page downloads the release (newest, or a version you type), verifies the published
+*Upgrade* on the Server page downloads the release (newest, or a version you type), verifies the published
 checksums, runs the installer again and restarts the daemon; `sudo pocketcloud server upgrade` does the same from
 a shell, `--from-dir` with binaries you put there. The installer The installer is idempotent and owns all server configuration: host hardening (sshd, sysctl,
 fail2ban, unattended-upgrades, journald), Docker's daemon.json, Caddy's unit and binary, auditd rules, the AIDE
@@ -82,7 +82,7 @@ cloud-init (user, ssh key, bootstrap firewall) runs once, at first boot. Each in
 
 ## Backups
 
-Opt-in per installation, on the server page: enter the Hetzner Object Storage endpoint, bucket and S3 keys
+Opt-in per installation, under Server → Backups: enter the Hetzner Object Storage endpoint, bucket and S3 keys
 there; *Disable* switches them off again. Settings are stored sealed with the master key. Storage is Hetzner Object Storage (S3) through restic; the repository is
 encrypted with a password derived from the master key, so the recovery phrase plus the bucket credentials restore
 everything. Nightly at 03:30 server time; every snapshot is kept for 30 days and deleted after that, integrity check on
@@ -93,7 +93,7 @@ In the backup set: the pocketcloud database (consistent copy), the server config
 postgres, mysql or mariadb service. Apps with their own backup scheme switch it off on their page. Never in the
 set: the master key.
 
-The server page shows the last run, snapshot count, size and last check, with a *Back up now* button; the
+The Backups tab of the Server page shows the last run, snapshot count, size and last check, with a *Back up now* button; the
 dashboard warns after a failed run or two days without success. On the server, `sudo pocketcloud server backup`
 runs the same job from a shell and waits for it; `sudo pocketcloud server restore <app> latest` does the same
 for an app's data restore, for the day the interface is down. Hetzner Object Storage occasionally answers a request with a
@@ -114,7 +114,7 @@ Restore in the interface:
   stopped, its volumes and `files` are replaced by the snapshot's, database dumps are replayed into the database
   services (started first, alone), then everything starts. Current data is overwritten.
 - **A rebuilt server**: run `pocketcloud setup <newname>` and answer *yes* to reusing the recovery phrase of the
-  old installation, so the new server has the same master key. Enter the same bucket on the server page, press
+  old installation, so the new server has the same master key. Enter the same bucket under Server → Backups, press
   *Refresh snapshots*, then *Restore apps from a
   snapshot*: every app of the snapshot that does not exist yet is imported with compose file, routes, secrets and
   settings, deployed, and its data restored. The job log tells per app what happened. Devices, users and VPN
@@ -132,7 +132,7 @@ server or, from Hetzner's rescue system, to recover one. Keep the recovery phras
 
 ## DNS
 
-Certificates renew inside the daemon, which also runs the challenge nameserver; *Renew now* on the server page
+Certificates renew inside the daemon, which also runs the challenge nameserver; *Renew now* on the Server page
 and `sudo pocketcloud server renew` only ask it to.
 
 The real zone is written once, by setup. The server answers `_acme-challenge.<domain>` itself for certificate
@@ -147,7 +147,7 @@ renewals and holds no DNS token. A rebuilt server gets its records from the setu
 - *Server → Check* lists all pending packages, *Upgrade* installs them. The upgrade runs as a transient
   systemd unit (`pocketcloud-apt-<time>`) outside the daemon's sandbox; a failed run can be retried, it finishes the
   interrupted dpkg step first.
-- Pocketcloud itself: *Upgrade* on the server page, see "What an upgrade applies". Running apps are not touched.
+- Pocketcloud itself: *Upgrade* on the Server page, see "What an upgrade applies". Running apps are not touched.
   A development build goes in through the upload field on the same page, or `scripts/push-dev.sh`.
 
 ## Certificates
@@ -172,7 +172,7 @@ handling is off (`/etc/docker/daemon.json`), so a container can never publish a 
 
 Every action in the interface is in *Audit*. On the host, auditd records privileged commands, changes under
 `/etc/pocketcloud`, `/etc/wireguard`, `/etc/docker`, `/etc/caddy`, `/etc/ssh` and the usual identity files; the
-server page shows this week's summary. AIDE checks file integrity nightly at 04:30; the report is on the server page.
+Server → Security shows this week's summary. AIDE checks file integrity nightly at 04:30; the report is on the same tab.
 After an intended system change (upgrade, new packages) the next report lists those files; refresh the baseline with
 `sudo aide --update -c /etc/aide/aide.conf && sudo mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db`.
 

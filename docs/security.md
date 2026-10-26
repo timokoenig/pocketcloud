@@ -13,7 +13,7 @@ either.
 Public routes pass through a web application firewall before they reach the app: Coraza with the OWASP Core Rule
 Set at the default paranoia level, compiled into the Caddy binary Pocketcloud installs (`scripts/build-caddy.sh`,
 also a release asset). Request bodies are inspected up to 13 MB, larger ones are rejected; response bodies are
-not inspected. A blocked request gets a 403 and shows up on the server page. The WAF is on for every new public
+not inspected. A blocked request gets a 403 and shows up under Server → Security. The WAF is on for every new public
 route and can be switched off per route for apps that trigger false positives. Internal routes and the interface
 are not behind it.
 

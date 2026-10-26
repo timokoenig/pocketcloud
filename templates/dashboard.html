@@ -1,40 +1,57 @@
 {% extends "layout.html" %}
 {% block content %}
-<div class="row between">
-  <h1>Apps</h1>
-  <a class="button primary" href="/apps/new">New app</a>
+<div class="page-head">
+  <div><h1>Apps</h1></div>
+  <div class="actions"><a class="btn btn-primary" href="/apps/new">New app</a></div>
 </div>
-{% if !docker_ok %}<div class="flash err">Docker is not reachable. Deploys will fail; check the server page.</div>{% endif %}
-{% if let Some(c) = cert_problem %}<div class="flash err">Certificate problem: {{ c }}</div>{% endif %}
-{% if open_alerts.0 > 0 %}<div class="flash err">{{ open_alerts.0 }} critical alert(s){% if open_alerts.1 > 0 %} and {{ open_alerts.1 }} warning(s){% endif %}. <a href="/alerts">Alerts</a></div>{% else if open_alerts.1 > 0 %}<div class="flash warn">{{ open_alerts.1 }} open warning(s). <a href="/alerts">Alerts</a></div>{% endif %}
-<p class="muted small">Last 24 hours: {% if day_events.is_empty() %}no events{% else %}{{ day_events }}{% endif %} · <a href="/events">events</a> · <a href="/alerts">alerts</a></p>
-{% if let Some(b) = backup_warning %}<div class="flash warn">{{ b }} <a href="/server">Server page</a></div>{% endif %}
-{% if host.reboot_required %}<div class="flash warn">The server needs a reboot for pending updates. <a href="/server">Server page</a></div>{% endif %}
-{% if apps.is_empty() %}
-<p class="muted">No apps yet. Create one from a compose file; images come from a registry, builds are not supported.</p>
-{% else %}
-<table>
-  <thead><tr><th>Name</th><th>Status</th><th>Hosts</th><th>Updated</th></tr></thead>
-  <tbody>
-  {% for a in apps %}
-  <tr>
-    <td><a href="/apps/{{ a.id }}"><strong>{{ a.name }}</strong></a></td>
-    <td><span class="status {{ a.status }}">{{ a.status }}</span>{% if !a.status_detail.is_empty() %} <span class="muted small" title="{{ a.status_detail }}">details</span>{% endif %}</td>
-    <td class="small">{{ a.hosts }}</td>
-    <td class="muted small">{{ a.updated }}</td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
-<h2>Recent jobs</h2>
-{% if jobs.is_empty() %}<p class="muted">none</p>{% else %}
-<table class="compact">
-  <tbody>
-  {% for j in jobs %}
-  <tr><td><a href="/jobs/{{ j.id }}">#{{ j.id }} {{ j.kind }}</a></td><td>{{ j.app_name }}</td><td><span class="status {{ j.status }}">{{ j.status }}</span></td><td class="muted small">{{ j.created }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
+{% if !docker_ok %}<div class="alert err"><div class="body"><div class="title">Docker is not reachable</div>Deploys will fail. <a href="/server">Server</a></div></div>{% endif %}
+{% if let Some(c) = cert_problem %}<div class="alert err"><div class="body"><div class="title">Certificate problem</div>{{ c }}</div></div>{% endif %}
+{% if open_alerts.0 > 0 %}<div class="alert err"><div class="body"><div class="title">{{ open_alerts.0 }} critical alert{% if open_alerts.0 != 1 %}s{% endif %}{% if open_alerts.1 > 0 %} and {{ open_alerts.1 }} warning{% if open_alerts.1 != 1 %}s{% endif %}{% endif %} open</div><a href="/alerts">See the alerts</a></div></div>
+{% else if open_alerts.1 > 0 %}<div class="alert warn"><div class="body"><div class="title">{{ open_alerts.1 }} warning{% if open_alerts.1 != 1 %}s{% endif %} open</div><a href="/alerts">See the alerts</a></div></div>{% endif %}
+{% if let Some(b) = backup_warning %}<div class="alert warn"><div class="body"><div class="title">Backups</div>{{ b }} <a href="/server/backups">Backups</a></div></div>{% endif %}
+{% if host.reboot_required %}<div class="alert warn"><div class="body"><div class="title">Reboot required</div>Pending updates need a reboot. <a href="/server">Server</a></div></div>{% endif %}
+
+<div class="stats" style="--n:5">
+  <div class="stat"><div class="label">Apps running</div><div class="value">{{ apps_running }}<small>of {{ apps.len() }}</small></div></div>
+  <a class="stat{% if open_alerts.0 > 0 %} bad{% else if open_alerts.1 > 0 %} warn{% else %} good{% endif %}" href="/alerts"><div class="label">Open alerts</div><div class="value">{{ open_alerts.0 + open_alerts.1 }}{% if open_alerts.0 > 0 %}<small>{{ open_alerts.0 }} critical</small>{% endif %}</div></a>
+  <a class="stat" href="/events"><div class="label">Events, 24 h</div><div class="value">{{ events_24h }}</div><div class="sub" title="{{ day_events }}">{% if day_events.is_empty() %}quiet{% else %}{{ day_events }}{% endif %}</div></a>
+  <a class="stat" href="/server"><div class="label">Disk</div><div class="value">{{ disk_used_pct }}<small>%</small></div><div class="meter{% if disk_used_pct >= 90 %} bad{% else if disk_used_pct >= 80 %} warn{% endif %}"><i style="width:{{ disk_used_pct }}%"></i></div></a>
+  <a class="stat" href="/server"><div class="label">Memory</div><div class="value">{{ mem_used_pct }}<small>%</small></div><div class="meter{% if mem_used_pct >= 95 %} bad{% else if mem_used_pct >= 85 %} warn{% endif %}"><i style="width:{{ mem_used_pct }}%"></i></div></a>
+</div>
+
+<div class="stack">
+<div class="card">
+  {% if apps.is_empty() %}
+  <div class="card-body"><div class="empty"><b>No apps yet</b>Create one from a compose file with prebuilt images.</div></div>
+  {% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>App</th><th>Status</th><th>Hosts</th><th class="right">Updated</th></tr></thead>
+    <tbody>
+    {% for a in apps %}
+    <tr>
+      <td><a href="/apps/{{ a.id }}"><strong>{{ a.name }}</strong></a></td>
+      <td><span class="badge {{ a.status }}">{{ a.status }}</span>{% if !a.status_detail.is_empty() %}<span class="sub">{{ a.status_detail }}</span>{% endif %}</td>
+      <td class="wrap mono small">{% if a.hosts.is_empty() %}<span class="muted">no routes</span>{% else %}{{ a.hosts }}{% endif %}</td>
+      <td class="time right">{{ a.updated }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Recent jobs</div></div></div>
+  {% if jobs.is_empty() %}<div class="card-body"><p class="muted">No jobs yet.</p></div>{% else %}
+  <div class="card-body flush"><div class="table-wrap"><table>
+    <thead><tr><th>Job</th><th>App</th><th>Status</th><th class="right">Started</th></tr></thead>
+    <tbody>
+    {% for j in jobs %}
+    <tr><td><a href="/jobs/{{ j.id }}">{{ j.kind }} <span class="muted">#{{ j.id }}</span></a></td><td>{{ j.app_name }}</td><td><span class="badge {{ j.status }}">{{ j.status }}</span></td><td class="time right">{{ j.created }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div></div>
+  {% endif %}
+</div>
+</div>
 {% endblock %}

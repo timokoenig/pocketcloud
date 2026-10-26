@@ -1,0 +1,72 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Server</h1><p class="desc">Security</p></div>
+</div>
+{% include "_tabs_server.html" %}
+<div class="stack">
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Runtime detection</div></div></div>
+    <div class="card-body">
+      <form method="post" action="/server/falco" class="switch-row">
+        <input type="hidden" name="value" value="{% if falco_on %}off{% else %}on{% endif %}">
+        <button class="switch" role="switch" aria-checked="{% if falco_on %}true{% else %}false{% endif %}"></button>
+        <div class="text"><b>Falco {% if falco_on %}on{% else %}off{% endif %}</b><span>Watches syscalls with an eBPF probe: shells in containers, sensitive file reads, privilege escalation. About 150 MB of memory.</span></div>
+      </form>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Web application firewall</div></div>{% if waf_available %}<span class="badge success">active</span>{% else %}<span class="badge destructive">unavailable</span>{% endif %}</div>
+    <div class="card-body">
+      {% if waf_available %}<p>Coraza with the OWASP Core Rule Set inspects every public route that has the WAF switched on. 10 blocks in 10 minutes, or 3 failed ssh logins, ban the client for an hour at the firewall.</p>
+      {% else %}<p>The installed Caddy has no Coraza module; public routes run without the WAF. Upgrade pocketcloud on the <a href="/server">Overview</a> tab to get the bundled build.</p>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Banned clients</div></div>{% if banned_now > 0 %}<span class="badge warning">{{ banned_now }} banned now</span>{% else %}<span class="badge secondary plain">none banned</span>{% endif %}</div>
+  {% if jails.is_empty() %}<div class="card-body"><p class="muted">No jail status available.</p></div>{% else %}
+  <div class="card-body flush"><div class="table-wrap"><table>
+    <thead><tr><th>Jail</th><th>Banned now</th><th class="right">Bans ever</th></tr></thead>
+    <tbody>
+    {% for j in jails %}
+    <tr>
+      <td class="mono">{{ j.jail }}</td>
+      <td>{% if j.banned.is_empty() %}<span class="muted">none</span>{% else %}<div class="row">{% for ip in j.banned %}<form method="post" action="/server/unban" class="inline row" style="gap:6px"><input type="hidden" name="jail" value="{{ j.jail }}"><input type="hidden" name="ip" value="{{ ip }}"><span class="mono">{{ ip }}</span><button class="btn btn-link btn-xs" title="lift the ban">unban</button></form>{% endfor %}</div>{% endif %}</td>
+      <td class="num right">{{ j.total }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div></div>
+  {% endif %}
+</div>
+
+{% if waf_available %}
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Blocked requests</div><div class="card-desc">Last 7 days. The id also appears in Caddy's error log.</div></div></div>
+  {% if waf_events.is_empty() %}<div class="card-body"><p class="muted">No blocked requests in the last 7 days.</p></div>{% else %}
+  <div class="card-body flush"><div class="table-wrap"><table>
+    <thead><tr><th>Time</th><th>Client</th><th>Host</th><th>Request</th><th>Id</th></tr></thead>
+    <tbody>
+    {% for e in waf_events %}
+    <tr><td class="time">{{ e.at }}</td><td class="mono">{{ e.client }}</td><td class="mono">{{ e.host }}</td><td class="mono wrap">{{ e.uri }}</td><td class="mono muted">{{ e.id }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div></div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-head"><div><div class="card-title">File integrity</div><div class="card-desc">AIDE compares the system files with its baseline nightly. Last run {{ aide_checked }}.</div></div></div>
+  <div class="card-body">{% if aide_report.trim().is_empty() %}<p class="muted">No report yet.</p>{% else %}<pre class="log short">{{ aide_report }}</pre>{% endif %}</div>
+</div>
+
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Audit events this week</div><div class="card-desc">auditd: writes to sensitive files, setuid, mounts, kernel modules, clock changes.</div></div></div>
+  <div class="card-body">{% if audit_summary.trim().is_empty() %}<p class="muted">Nothing recorded this week.</p>{% else %}<pre class="log short">{{ audit_summary }}</pre>{% endif %}</div>
+</div>
+</div>
+{% endblock %}

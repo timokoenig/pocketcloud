@@ -84,7 +84,7 @@ pub fn body(name: &str, interface: &str, changes: &[Change]) -> String {
     out
 }
 
-/// The notification settings: from the database (sealed with the master key, edited on the Alerts page),
+/// The notification settings: from the database (sealed with the master key, edited under Settings → Notifications),
 /// seeded from the config file on first start.
 pub async fn settings(state: &super::state::State) -> NotifyConfig {
     if let Ok(Some(b64)) = db::kv_get(&state.db, "notify.settings").await {

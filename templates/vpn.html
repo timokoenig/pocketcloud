@@ -1,33 +1,42 @@
 {% extends "layout.html" %}
 {% block content %}
-<h1>VPN devices</h1>
+<div class="page-head">
+  <div><h1>Settings</h1><p class="desc">VPN devices</p></div>
+</div>
+{% include "_tabs_settings.html" %}
+<div class="stack">
 {% if let Some(n) = new_peer %}
-<div class="card stack">
-  <h2>{{ n.name }} is ready</h2>
-  <p>Import this configuration into WireGuard now. It contains the device's private key and is <strong>not stored</strong>; close this page and it is gone. Scan the code with the WireGuard app, or download the file: imported, the tunnel is called <code>{{ n.file_name }}</code> without the extension.</p>
-  <p><a class="button primary" href="/vpn/download/{{ n.download_token }}">Download {{ n.file_name }}</a></p>
-  <div class="row qr">
-    <div class="qr-code">{{ n.qr_svg|safe }}</div>
-    <pre class="log small">{{ n.config }}</pre>
+<div class="card">
+  <div class="card-head"><div><div class="card-title">{{ n.name }} is ready</div><div class="card-desc">Import this configuration into WireGuard now. It holds the device's private key and is not stored: close this page and it is gone. The tunnel is called <code>{{ n.file_name }}</code> without the extension.</div></div><a class="btn btn-primary" href="/settings/vpn/download/{{ n.download_token }}">Download {{ n.file_name }}</a></div>
+  <div class="card-body">
+    <div class="qr">
+      <div class="qr-code">{{ n.qr_svg|safe }}</div>
+      <pre class="log">{{ n.config }}</pre>
+    </div>
   </div>
 </div>
 {% endif %}
-<table>
-  <thead><tr><th>Device</th><th>Address</th><th>Scope</th><th>Last handshake</th><th>From</th><th>Added</th><th></th></tr></thead>
-  <tbody>
-  {% for p in peers %}
-  <tr>
-    <td><strong>{{ p.name }}</strong></td><td>{{ p.ip }}</td><td><span class="tag {{ p.scope }}">{{ p.scope }}</span></td>
-    <td>{{ p.last_handshake }}</td><td class="muted small">{{ p.endpoint }}</td><td class="muted small">{{ p.created }}</td>
-    <td><form method="post" action="/vpn/{{ p.id }}/delete" class="inline" data-confirm="Revoke {{ p.name }}? Its tunnel closes immediately."><button class="link danger">revoke</button></form></td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table>
-<h2>Add a device</h2>
-<form method="post" action="/vpn" class="row">
-  <label>Name <input name="name" placeholder="phone" pattern="[A-Za-z0-9_-]{1,32}" required></label>
-  <label>Scope <select name="scope"><option value="web">web: interface and internal routes</option><option value="full">full: also ssh and the app networks ({{ apps_cidr }})</option></select></label>
-  <button class="primary">Create</button>
-</form>
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Devices</div><div class="card-desc"><em>web</em> reaches the interface and internal routes, <em>full</em> also ssh and the app networks ({{ apps_cidr }}).</div></div></div>
+  <div class="card-body flush"><div class="table-wrap"><table>
+    <thead><tr><th>Device</th><th>Address</th><th>Scope</th><th>Last handshake</th><th>From</th><th class="right">Added</th><th></th></tr></thead>
+    <tbody>
+    {% for p in peers %}
+    <tr>
+      <td><strong>{{ p.name }}</strong></td><td class="mono">{{ p.ip }}</td><td><span class="badge {{ p.scope }}">{{ p.scope }}</span></td>
+      <td class="{% if p.last_handshake == "never" %}muted{% endif %}">{{ p.last_handshake }}</td><td class="mono muted">{{ p.endpoint }}</td><td class="time right">{{ p.created }}</td>
+      <td class="actions"><form method="post" action="/settings/vpn/{{ p.id }}/delete" class="inline" data-confirm="Revoke {{ p.name }}? Its tunnel closes immediately."><button class="btn btn-ghost btn-sm btn-danger">Revoke</button></form></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div></div>
+  <div class="card-foot">
+    <form method="post" action="/settings/vpn" class="form-row">
+      <label class="field"><span>New device</span><input name="name" placeholder="phone" pattern="[A-Za-z0-9_-]{1,32}" required></label>
+      <label class="field"><span>Scope</span><select name="scope"><option value="web">web</option><option value="full">full</option></select></label>
+      <div class="field fixed"><button class="btn btn-primary">Create</button></div>
+    </form>
+  </div>
+</div>
+</div>
 {% endblock %}

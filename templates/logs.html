@@ -1,12 +1,12 @@
 {% extends "layout.html" %}
 {% block content %}
-<p><a href="/apps/{{ app.id }}">← {{ app.name }}</a></p>
-<div class="row between">
-  <h1>{{ app.name }} · {{ service }}</h1>
-  <form method="get" class="row inline">
-    <label>lines <input name="tail" type="number" value="{{ tail }}" min="10" max="5000" class="short"></label>
-    <button>Reload</button>
+<div class="crumbs"><a href="/">Apps</a><span>/</span><a href="/apps/{{ app.id }}">{{ app.name }}</a><span>/</span><span>{{ service }} logs</span></div>
+<div class="page-head">
+  <div><h1>{{ app.name }} <span class="muted" style="font-weight:400">{{ service }}</span></h1></div>
+  <form method="get" class="actions">
+    <label class="field"><span class="sr-only">Lines</span><input name="tail" type="number" value="{{ tail }}" min="10" max="5000" class="w-xs" title="lines"></label>
+    <button class="btn">Reload</button>
   </form>
 </div>
-<pre class="log">{{ log }}</pre>
+<pre class="log" id="log">{{ log }}</pre>
 {% endblock %}

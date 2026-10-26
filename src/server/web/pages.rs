@@ -34,11 +34,17 @@ pub async fn dashboard(State(state): State<Shared>, user: User, Query(f): Query<
         })
         .collect();
     let cert_problem = db::certificates(&state.db).await?.into_iter().find(|c| !c.last_error.is_empty()).map(|c| format!("{}: {}", c.domain, c.last_error));
+    let host = state.host.read().await.clone();
+    let day_kinds = db::event_kinds_since(&state.db, &(chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339()).await?;
     html(views::Dashboard {
         base: views::Base::new("Apps", &user.username, &state.config.name, &f),
+        apps_running: apps.iter().filter(|a| a.status == "running").count(),
+        events_24h: day_kinds.iter().map(|(_, n)| *n).sum(),
+        disk_used_pct: if host.disk_total_gb > 0.0 { (host.disk_used_gb / host.disk_total_gb * 100.0) as u64 } else { 0 },
+        mem_used_pct: if host.mem_total_mb > 0 { (host.mem_total_mb - host.mem_available_mb) * 100 / host.mem_total_mb } else { 0 },
         apps: rows,
         jobs,
-        host: state.host.read().await.clone(),
+        host,
         docker_ok: docker::ping(&state).await,
         cert_problem,
         backup_warning: backup_warning(&state).await,
@@ -46,32 +52,27 @@ pub async fn dashboard(State(state): State<Shared>, user: User, Query(f): Query<
             let a = db::open_alerts(&state.db).await?;
             (a.iter().filter(|x| x.severity == "critical").count(), a.iter().filter(|x| x.severity == "warning").count())
         },
-        day_events: db::event_kinds_since(&state.db, &(chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339())
-            .await?
-            .iter()
-            .map(|(k, n)| format!("{n} {k}"))
-            .collect::<Vec<_>>()
-            .join(", "),
+        day_events: day_kinds.iter().map(|(k, n)| format!("{n} {k}")).collect::<Vec<_>>().join(", "),
     })
 }
 
-pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
-    use crate::server::alerts;
-    let view = |a: &db::Alert| views::AlertView {
-        severity: a.severity.clone(),
-        summary: a.summary.clone(),
-        opened: views::ago(&a.opened),
-        resolved: a.resolved.as_deref().map(views::ago).unwrap_or_default(),
-    };
-    let open: Vec<views::AlertView> = db::open_alerts(&state.db).await?.iter().map(view).collect();
-    let since = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
-    let resolved: Vec<views::AlertView> = db::resolved_alerts(&state.db, &since).await?.iter().map(view).collect();
+/// Notification channel summary shared by the Alerts and Notifications pages.
+struct NotifyStatus {
+    configured: bool,
+    channels: String,
+    last: String,
+    error: String,
+    heartbeat: String,
+    settings: crate::server::config::NotifyConfig,
+}
+
+async fn notify_status(state: &Shared) -> NotifyStatus {
     let kv = |k: &str| {
         let k = k.to_string();
         let db = state.db.clone();
         async move { db::kv_get(&db, &k).await.ok().flatten().unwrap_or_default() }
     };
-    let n = crate::server::notify::settings(&state).await;
+    let n = crate::server::notify::settings(state).await;
     let mut channels = Vec::new();
     if let Some(e) = &n.email {
         channels.push(format!("e-mail to {}", e.to.join(", ")));
@@ -85,11 +86,41 @@ pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Fla
     } else if hb_at.is_empty() {
         "not sent yet".into()
     } else {
-        format!("{} {}", if kv("notify.heartbeat_ok").await == "1" { "ok" } else { "FAILED" }, views::ago(&hb_at))
+        format!("{} {}", if kv("notify.heartbeat_ok").await == "1" { "ok" } else { "failed" }, views::ago(&hb_at))
     };
+    let last = kv("notify.last_at").await;
+    NotifyStatus {
+        configured: n.any(),
+        channels: channels.join(", "),
+        last: if last.is_empty() { String::new() } else { views::ago(&last) },
+        error: kv("notify.last_error").await,
+        heartbeat,
+        settings: n,
+    }
+}
+
+pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
+    let view = |a: &db::Alert| views::AlertView {
+        severity: a.severity.clone(),
+        summary: a.summary.clone(),
+        opened: views::ago(&a.opened),
+        resolved: a.resolved.as_deref().map(views::ago).unwrap_or_default(),
+    };
+    let open: Vec<views::AlertView> = db::open_alerts(&state.db).await?.iter().map(view).collect();
+    let since = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
+    let resolved: Vec<views::AlertView> = db::resolved_alerts(&state.db, &since).await?.iter().map(view).collect();
     let day = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
     let mut metrics = Vec::new();
-    for name in ["cpu.busy_pct", "mem.available_pct", "disk.used_pct", "disk.inodes_pct", "load.1", "pressure.mem_full_avg10", "pressure.io_full_avg10", "mem.swap_used_pct"] {
+    for (name, label, unit) in [
+        ("cpu.busy_pct", "CPU busy", "%"),
+        ("mem.available_pct", "Memory available", "%"),
+        ("mem.swap_used_pct", "Swap used", "%"),
+        ("disk.used_pct", "Disk used", "%"),
+        ("disk.inodes_pct", "Inodes used", "%"),
+        ("load.1", "Load (1 min)", ""),
+        ("pressure.mem_full_avg10", "Memory pressure", "%"),
+        ("pressure.io_full_avg10", "IO pressure", "%"),
+    ] {
         let series = db::metric_series(&state.db, name, &day).await?;
         if series.is_empty() {
             continue;
@@ -98,16 +129,48 @@ pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Fla
         let min = values.iter().cloned().fold(f64::MAX, f64::min);
         let max = values.iter().cloned().fold(f64::MIN, f64::max);
         let avg = values.iter().sum::<f64>() / values.len() as f64;
-        metrics.push((name.to_string(), format!("min {min:.1} · avg {avg:.1} · max {max:.1} · now {:.1}", values.last().copied().unwrap_or(0.0))));
+        let span = if max - min < 1e-9 { 1.0 } else { max - min };
+        let n = values.len().max(2) as f64;
+        let spark = values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| format!("{:.1},{:.1}", i as f64 / (n - 1.0) * 100.0, 100.0 - (v - min) / span * 100.0))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let fmt = |v: f64| if unit == "%" { format!("{v:.0}") } else { format!("{v:.2}") };
+        metrics.push(views::MetricRow {
+            name: name.to_string(),
+            label: label.to_string(),
+            unit: unit.to_string(),
+            min: fmt(min),
+            avg: fmt(avg),
+            max: fmt(max),
+            now: fmt(values.last().copied().unwrap_or(0.0)),
+            spark,
+        });
     }
-    let last = kv("notify.last_at").await;
+    let n = notify_status(&state).await;
     html(views::AlertsPage {
         base: views::Base::new("Alerts", &user.username, &state.config.name, &f),
         open,
         resolved,
-        t: alerts::thresholds(&state).await,
-        notify_configured: n.any(),
-        channels: channels.join(", "),
+        notify_configured: n.configured,
+        channels: n.channels,
+        notify_last: n.last,
+        notify_error: n.error,
+        heartbeat: n.heartbeat,
+        metrics,
+    })
+}
+
+pub async fn notifications(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
+    let st = notify_status(&state).await;
+    let n = &st.settings;
+    html(views::NotificationsPage {
+        base: views::Base::new("Notifications", &user.username, &state.config.name, &f),
+        t: crate::server::alerts::thresholds(&state).await,
+        notify_configured: st.configured,
+        channels: st.channels.clone(),
         notify: views::NotifyForm {
             to: n.email.as_ref().map(|e| e.to.join(", ")).unwrap_or_default(),
             from: n.email.as_ref().map(|e| e.from.clone()).unwrap_or_default(),
@@ -120,23 +183,22 @@ pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Fla
             has_webhook_token: n.webhook.as_ref().map(|w| !w.token.is_empty()).unwrap_or(false),
             heartbeat_url: n.heartbeat_url.clone(),
         },
-        notify_last: if last.is_empty() { String::new() } else { views::ago(&last) },
-        notify_error: kv("notify.last_error").await,
-        heartbeat,
-        metrics,
+        notify_last: st.last.clone(),
+        notify_error: st.error.clone(),
+        heartbeat: st.heartbeat.clone(),
     })
 }
 
 pub async fn set_thresholds(State(state): State<Shared>, user: User, Form(t): Form<crate::server::alerts::Thresholds>) -> R {
     if t.disk_warn > t.disk_crit || t.mem_crit > t.mem_warn {
-        return Ok(back("/alerts", None, Some("warning thresholds must come before critical ones")));
+        return Ok(back("/settings/notifications", None, Some("warning thresholds must come before critical ones")));
     }
     if [t.disk_warn, t.disk_crit, t.inodes_warn, t.mem_warn, t.mem_crit, t.cpu_warn, t.swap_warn].iter().any(|v| *v < 0.0 || *v > 100.0) || t.ssh_failed == 0 || t.waf_blocks == 0 || t.http_5xx == 0 || t.backup_stale_hours < 1 || t.reboot_days < 0 || t.cert_days < 1 {
-        return Ok(back("/alerts", None, Some("a threshold is out of range")));
+        return Ok(back("/settings/notifications", None, Some("a threshold is out of range")));
     }
     crate::server::alerts::set_thresholds(&state, &t).await?;
     db::audit(&state.db, &user.username, "alerts.thresholds", &serde_json::to_string(&t).unwrap_or_default()).await?;
-    Ok(back("/alerts", Some("thresholds saved"), None))
+    Ok(back("/settings/notifications", Some("thresholds saved"), None))
 }
 
 #[derive(Deserialize)]
@@ -173,19 +235,19 @@ pub async fn save_notify(State(state): State<Shared>, user: User, Form(f): Form<
         None
     } else {
         if f.smtp_host.trim().is_empty() || to.is_empty() || f.from.trim().is_empty() {
-            return Ok(back("/alerts", None, Some("e-mail needs recipients, a from address and an SMTP host")));
+            return Ok(back("/settings/notifications", None, Some("e-mail needs recipients, a from address and an SMTP host")));
         }
         if !matches!(f.smtp_tls.as_str(), "starttls" | "implicit" | "none") {
-            return Ok(back("/alerts", None, Some("TLS must be starttls, implicit or none")));
+            return Ok(back("/settings/notifications", None, Some("TLS must be starttls, implicit or none")));
         }
         if let Err(e) = crate::server::notify::check_remote_host(f.smtp_host.trim()) {
-            return Ok(back("/alerts", None, Some(&format!("SMTP host: {e}"))));
+            return Ok(back("/settings/notifications", None, Some(&format!("SMTP host: {e}"))));
         }
         let password = if f.smtp_password.is_empty() { current.email.as_ref().map(|e| e.smtp_password.clone()).unwrap_or_default() } else { f.smtp_password.clone() };
         let e = EmailConfig { to, from: f.from.trim().to_string(), smtp_host: f.smtp_host.trim().to_string(), smtp_port: f.smtp_port.unwrap_or(587), smtp_tls: f.smtp_tls.clone(), smtp_user: f.smtp_user.trim().to_string(), smtp_password: password };
         let bad = crate::server::notify::bad_addresses(&e);
         if !bad.is_empty() {
-            return Ok(back("/alerts", None, Some(&format!("these addresses do not parse: {}", bad.join(", ")))));
+            return Ok(back("/settings/notifications", None, Some(&format!("these addresses do not parse: {}", bad.join(", ")))));
         }
         Some(e)
     };
@@ -193,21 +255,21 @@ pub async fn save_notify(State(state): State<Shared>, user: User, Form(f): Form<
         None
     } else {
         if !f.webhook_url.trim().starts_with("https://") && !f.webhook_url.trim().starts_with("http://") {
-            return Ok(back("/alerts", None, Some("the webhook URL must start with http:// or https://")));
+            return Ok(back("/settings/notifications", None, Some("the webhook URL must start with http:// or https://")));
         }
         if let Err(e) = crate::server::notify::check_remote_host(&crate::server::notify::url_host(f.webhook_url.trim()).unwrap_or_default()) {
-            return Ok(back("/alerts", None, Some(&format!("webhook: {e}"))));
+            return Ok(back("/settings/notifications", None, Some(&format!("webhook: {e}"))));
         }
         let token = if f.webhook_token.is_empty() { current.webhook.as_ref().map(|w| w.token.clone()).unwrap_or_default() } else { f.webhook_token.clone() };
         Some(WebhookConfig { url: f.webhook_url.trim().to_string(), token })
     };
     let heartbeat_url = f.heartbeat_url.trim().to_string();
     if !heartbeat_url.is_empty() && !heartbeat_url.starts_with("https://") && !heartbeat_url.starts_with("http://") {
-        return Ok(back("/alerts", None, Some("the heartbeat URL must start with http:// or https://")));
+        return Ok(back("/settings/notifications", None, Some("the heartbeat URL must start with http:// or https://")));
     }
     if !heartbeat_url.is_empty() {
         if let Err(e) = crate::server::notify::check_remote_host(&crate::server::notify::url_host(&heartbeat_url).unwrap_or_default()) {
-            return Ok(back("/alerts", None, Some(&format!("heartbeat: {e}"))));
+            return Ok(back("/settings/notifications", None, Some(&format!("heartbeat: {e}"))));
         }
     }
     let cfg = NotifyConfig { email, webhook, heartbeat_url };
@@ -215,14 +277,14 @@ pub async fn save_notify(State(state): State<Shared>, user: User, Form(f): Form<
     let _ = db::kv_set(&state.db, "notify.last_error", "").await;
     let _ = db::kv_set(&state.db, "notify.failures", "0").await;
     db::audit(&state.db, &user.username, "alerts.notify", &format!("email={} webhook={} heartbeat={}", cfg.email.is_some(), cfg.webhook.is_some(), !cfg.heartbeat_url.is_empty())).await?;
-    Ok(back("/alerts", Some("notification settings saved; send a test to prove them"), None))
+    Ok(back("/settings/notifications", Some("notification settings saved; send a test to prove them"), None))
 }
 
 pub async fn test_notification(State(state): State<Shared>, user: User) -> R {
     db::audit(&state.db, &user.username, "alerts.test", "").await?;
     match crate::server::alerts::send_test(&state).await {
-        Ok(()) => Ok(back("/alerts", Some("test notification sent"), None)),
-        Err(e) => Ok(back("/alerts", None, Some(&format!("{e:#}")))),
+        Ok(()) => Ok(back("/settings/notifications", Some("test notification sent"), None)),
+        Err(e) => Ok(back("/settings/notifications", None, Some(&format!("{e:#}")))),
     }
 }
 
@@ -327,6 +389,18 @@ async fn peer_views(state: &Shared) -> anyhow::Result<Vec<views::PeerView>> {
         .collect())
 }
 
+pub async fn vpn_redirect() -> R {
+    Ok(back("/settings/vpn", None, None))
+}
+
+pub async fn registries_redirect() -> R {
+    Ok(back("/settings/registries", None, None))
+}
+
+pub async fn settings_redirect() -> R {
+    Ok(back("/settings/notifications", None, None))
+}
+
 pub async fn vpn(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
     html(views::VpnPage {
         base: views::Base::new("VPN devices", &user.username, &state.config.name, &f),
@@ -345,18 +419,18 @@ pub struct PeerForm {
 pub async fn vpn_add(State(state): State<Shared>, user: User, Form(f): Form<PeerForm>) -> R {
     let name = f.name.trim().to_string();
     if name.is_empty() || name.len() > 32 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Ok(back("/vpn", None, Some("device names: letters, digits, dashes, underscores")));
+        return Ok(back("/settings/vpn", None, Some("device names: letters, digits, dashes, underscores")));
     }
     let scope = match wireguard::Scope::parse(&f.scope) {
         Ok(s) => s,
-        Err(e) => return Ok(back("/vpn", None, Some(&e.to_string()))),
+        Err(e) => return Ok(back("/settings/vpn", None, Some(&e.to_string()))),
     };
     let used: Vec<std::net::Ipv4Addr> = db::vpn_peers(&state.db).await?.iter().filter_map(|p| p.ip.parse().ok()).collect();
     let ip = wireguard::next_ip(scope, &used)?;
     let keys = wireguard::generate_keypair();
     let psk = wireguard::generate_psk();
     if let Err(e) = db::add_vpn_peer(&state.db, &name, &keys.public, &state.key.seal(psk.as_bytes()), &ip.to_string(), scope.as_str()).await {
-        return Ok(back("/vpn", None, Some(&format!("not added: {e}"))));
+        return Ok(back("/settings/vpn", None, Some(&format!("not added: {e}"))));
     }
     db::audit(&state.db, &user.username, "vpn.add", &format!("{name} {} {ip}", scope.as_str())).await?;
     let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} added VPN device {name} ({}, {ip})", user.username, scope.as_str()), &serde_json::json!({"user": user.username, "action": "vpn.add"})).await;
@@ -396,7 +470,7 @@ pub async fn vpn_add(State(state): State<Shared>, user: User, Form(f): Form<Peer
 pub async fn vpn_download(State(state): State<Shared>, _user: User, Path(token): Path<String>) -> R {
     let entry = state.pending_configs.lock().await.remove(&token);
     let Some((file_name, config, _)) = entry else {
-        return Ok(back("/vpn", None, Some("that download is no longer available; create the device again")));
+        return Ok(back("/settings/vpn", None, Some("that download is no longer available; create the device again")));
     };
     let mut resp = axum::response::Response::new(axum::body::Body::from(config));
     resp.headers_mut().insert(axum::http::header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/octet-stream"));
@@ -410,14 +484,14 @@ pub async fn vpn_download(State(state): State<Shared>, _user: User, Path(token):
 pub async fn vpn_delete(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
     let peers = db::vpn_peers(&state.db).await?;
     if peers.len() <= 1 {
-        return Ok(back("/vpn", None, Some("the last device cannot be removed, you would lock yourself out")));
+        return Ok(back("/settings/vpn", None, Some("the last device cannot be removed, you would lock yourself out")));
     }
     let name = peers.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
     db::delete_vpn_peer(&state.db, id).await?;
     db::audit(&state.db, &user.username, "vpn.delete", &name).await?;
     let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} revoked VPN device {name}", user.username), &serde_json::json!({"user": user.username, "action": "vpn.delete"})).await;
     reconcile::apply(&state).await?;
-    Ok(back("/vpn", Some("device removed, its tunnel is closed"), None))
+    Ok(back("/settings/vpn", Some("device removed, its tunnel is closed"), None))
 }
 
 // ---- registries ----
@@ -441,21 +515,21 @@ pub struct RegistryForm {
 pub async fn registry_put(State(state): State<Shared>, user: User, Form(f): Form<RegistryForm>) -> R {
     let host = f.host.trim().trim_start_matches("https://").trim_end_matches('/').to_lowercase();
     if host.is_empty() || host.contains('/') || host.contains(' ') {
-        return Ok(back("/registries", None, Some("registry host like ghcr.io or registry.example.com")));
+        return Ok(back("/settings/registries", None, Some("registry host like ghcr.io or registry.example.com")));
     }
     if f.username.trim().is_empty() || f.password.is_empty() {
-        return Ok(back("/registries", None, Some("username and token are required")));
+        return Ok(back("/settings/registries", None, Some("username and token are required")));
     }
     db::put_registry(&state.db, &host, f.username.trim(), &state.key.seal(f.password.trim().as_bytes())).await?;
     db::audit(&state.db, &user.username, "registry.put", &host).await?;
     let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} set registry credentials for {host}", user.username), &serde_json::json!({"user": user.username, "action": "registry.put"})).await;
-    Ok(back("/registries", Some("registry saved"), None))
+    Ok(back("/settings/registries", Some("registry saved"), None))
 }
 
 pub async fn registry_delete(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
     db::delete_registry(&state.db, id).await?;
     db::audit(&state.db, &user.username, "registry.delete", &id.to_string()).await?;
-    Ok(back("/registries", Some("registry removed"), None))
+    Ok(back("/settings/registries", Some("registry removed"), None))
 }
 
 // ---- server ----
@@ -481,38 +555,64 @@ pub async fn server(State(state): State<Shared>, user: User, Query(f): Query<Fla
     html(views::ServerPage {
         base: views::Base::new("Server", &user.username, &state.config.name, &f),
         pending_checked: if host.pending_checked.is_empty() { "not yet".into() } else { views::ago(&host.pending_checked) },
-        aide_checked: if host.aide_checked.is_empty() { "not yet".into() } else { views::ago(&host.aide_checked) },
         certs,
         public_ips: state.public_ips.read().await.clone(),
         domains: state.config.domains.clone(),
         interface_host: state.config.interface_host.clone(),
         vpn_port: state.config.vpn.port,
         daemon_started: views::ago(&state.started.to_rfc3339()),
-        waf_available: state.waf_available,
-        waf_events: if state.config.dev { vec![] } else { system::waf_events(50).await },
-        jails: if state.config.dev { vec![] } else { system::fail2ban_status().await },
-        backup: backup_view(&state).await,
-        snapshots: crate::server::backup::cached_snapshots(&state).await,
-        backup_form: {
-            let c = crate::server::backup::settings(&state).await;
-            views::BackupForm {
-                s3_endpoint: c.as_ref().map(|c| c.s3_endpoint.clone()).unwrap_or_else(|| "https://fsn1.your-objectstorage.com".into()),
-                bucket: c.as_ref().map(|c| c.bucket.clone()).unwrap_or_default(),
-                access_key: c.as_ref().map(|c| c.access_key.clone()).unwrap_or_default(),
-                has_secret: c.is_some(),
-                hour: c.as_ref().map(|c| c.hour).unwrap_or(3),
-            }
-        },
-        falco_on: crate::server::system::falco_wanted(&state).await,
-        ssh_keys: db::ssh_keys(&state.db).await?.into_iter().map(|k| views::SshKeyView { id: k.id, name: k.name, fingerprint: k.public_key.split_whitespace().nth(1).map(|b| format!("{}…", b.chars().take(20).collect::<String>())).unwrap_or_default(), created: views::short_time(&k.created) }).collect(),
-        ssh_managed: db::kv_get(&state.db, "ssh.managed").await?.as_deref() == Some("1"),
-        ssh_user: state.config.ssh_user.clone(),
         newer_release: host.latest_version.clone(),
+        services_ok: host.services.iter().filter(|s| s.1).count(),
         host,
         uptime,
         mem_used_pct,
         disk_used_pct,
     })
+}
+
+pub async fn server_backups(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
+    let c = crate::server::backup::settings(&state).await;
+    html(views::BackupsPage {
+        base: views::Base::new("Backups", &user.username, &state.config.name, &f),
+        backup: backup_view(&state).await,
+        snapshots: crate::server::backup::cached_snapshots(&state).await,
+        backup_form: views::BackupForm {
+            s3_endpoint: c.as_ref().map(|c| c.s3_endpoint.clone()).unwrap_or_else(|| "https://fsn1.your-objectstorage.com".into()),
+            bucket: c.as_ref().map(|c| c.bucket.clone()).unwrap_or_default(),
+            access_key: c.as_ref().map(|c| c.access_key.clone()).unwrap_or_default(),
+            has_secret: c.is_some(),
+            hour: c.as_ref().map(|c| c.hour).unwrap_or(3),
+        },
+    })
+}
+
+pub async fn server_security(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
+    let host = state.host.read().await.clone();
+    let jails = if state.config.dev { vec![] } else { system::fail2ban_status().await };
+    html(views::SecurityPage {
+        base: views::Base::new("Security", &user.username, &state.config.name, &f),
+        waf_available: state.waf_available,
+        waf_events: if state.config.dev { vec![] } else { system::waf_events(50).await },
+        banned_now: jails.iter().map(|j| j.banned.len()).sum(),
+        jails,
+        falco_on: crate::server::system::falco_wanted(&state).await,
+        aide_checked: if host.aide_checked.is_empty() { "not yet".into() } else { views::ago(&host.aide_checked) },
+        aide_report: host.aide_report,
+        audit_summary: host.audit_summary,
+    })
+}
+
+pub async fn ssh_keys_page(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
+    html(views::SshKeysPage {
+        base: views::Base::new("SSH keys", &user.username, &state.config.name, &f),
+        ssh_keys: db::ssh_keys(&state.db).await?.into_iter().map(|k| views::SshKeyView { id: k.id, name: k.name, fingerprint: k.public_key.split_whitespace().nth(1).map(|b| format!("{}…", b.chars().take(24).collect::<String>())).unwrap_or_default(), created: views::short_time(&k.created) }).collect(),
+        ssh_managed: db::kv_get(&state.db, "ssh.managed").await?.as_deref() == Some("1"),
+        ssh_user: state.config.ssh_user.clone(),
+    })
+}
+
+pub async fn account_page(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
+    html(views::AccountPage { base: views::Base::new("Account", &user.username, &state.config.name, &f) })
 }
 
 pub async fn check_updates(State(state): State<Shared>, user: User) -> R {
@@ -570,17 +670,17 @@ pub async fn save_backup(State(state): State<Shared>, user: User, Form(f): Form<
     let bucket = f.bucket.trim().to_string();
     let access_key = f.access_key.trim().to_string();
     if endpoint.is_empty() || bucket.is_empty() || access_key.is_empty() {
-        return Ok(back("/server", None, Some("endpoint, bucket and access key are needed")));
+        return Ok(back("/server/backups", None, Some("endpoint, bucket and access key are needed")));
     }
     if !bucket.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.') {
-        return Ok(back("/server", None, Some("the bucket name looks wrong")));
+        return Ok(back("/server/backups", None, Some("the bucket name looks wrong")));
     }
     if let Err(e) = crate::server::notify::check_remote_host(&crate::server::notify::url_host(&endpoint).unwrap_or_else(|| endpoint.clone())) {
-        return Ok(back("/server", None, Some(&format!("S3 endpoint: {e}"))));
+        return Ok(back("/server/backups", None, Some(&format!("S3 endpoint: {e}"))));
     }
     let secret_key = if f.secret_key.is_empty() { current.as_ref().map(|c| c.secret_key.clone()).unwrap_or_default() } else { f.secret_key.clone() };
     if secret_key.is_empty() {
-        return Ok(back("/server", None, Some("the secret key is needed the first time")));
+        return Ok(back("/server/backups", None, Some("the secret key is needed the first time")));
     }
     let hour = f.hour.unwrap_or(3).min(23);
     let cfg = BackupConfig { s3_endpoint: endpoint, bucket, access_key, secret_key, hour };
@@ -588,17 +688,17 @@ pub async fn save_backup(State(state): State<Shared>, user: User, Form(f): Form<
     let _ = db::kv_set(&state.db, "backup.last_error", "").await;
     db::audit(&state.db, &user.username, "backup.settings", &format!("s3://{}", cfg.bucket)).await?;
     let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} configured backups to {}", user.username, crate::server::backup::repo_of(&cfg)), &serde_json::json!({"user": user.username, "action": "backup.settings"})).await;
-    Ok(back("/server", Some("backup settings saved; Back up now proves them"), None))
+    Ok(back("/server/backups", Some("backup settings saved; Back up now proves them"), None))
 }
 
 pub async fn disable_backup(State(state): State<Shared>, user: User, Form(f): Form<ConfirmForm>) -> R {
     if f.confirm.trim() != "disable" {
-        return Ok(back("/server", None, Some("type disable to confirm")));
+        return Ok(back("/server/backups", None, Some("type disable to confirm")));
     }
     crate::server::backup::save_settings(&state, None).await?;
     db::audit(&state.db, &user.username, "backup.disable", "").await?;
     let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} switched backups off", user.username), &serde_json::json!({"user": user.username, "action": "backup.disable"})).await;
-    Ok(back("/server", Some("backups switched off; snapshots stay in the bucket"), None))
+    Ok(back("/server/backups", Some("backups switched off; snapshots stay in the bucket"), None))
 }
 
 #[derive(Deserialize)]
@@ -614,7 +714,7 @@ pub async fn set_falco(State(state): State<Shared>, user: User, Form(f): Form<On
     if !on {
         let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} switched Falco off", user.username), &serde_json::json!({"user": user.username, "action": "monitor.falco"})).await;
     }
-    Ok(back("/server", Some(if on { "Falco switched on" } else { "Falco switched off" }), None))
+    Ok(back("/server/security", Some(if on { "Falco switched on" } else { "Falco switched off" }), None))
 }
 
 #[derive(Deserialize)]
@@ -685,18 +785,18 @@ pub async fn add_ssh_key(State(state): State<Shared>, user: User, Form(f): Form<
     let name = f.name.trim().to_string();
     let key = f.public_key.trim().to_string();
     if name.is_empty() || name.len() > 32 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Ok(back("/server", None, Some("key names: letters, digits, dashes, underscores")));
+        return Ok(back("/settings/ssh-keys", None, Some("key names: letters, digits, dashes, underscores")));
     }
     let parts: Vec<&str> = key.split_whitespace().collect();
     let valid_type = parts.first().map(|t| matches!(*t, "ssh-ed25519" | "ssh-rsa" | "ecdsa-sha2-nistp256" | "ecdsa-sha2-nistp384" | "sk-ssh-ed25519@openssh.com")).unwrap_or(false);
     use base64::Engine;
     let valid_body = parts.get(1).map(|b| base64::engine::general_purpose::STANDARD.decode(b).is_ok()).unwrap_or(false);
     if !valid_type || !valid_body || key.contains('\n') {
-        return Ok(back("/server", None, Some("that is not an ssh public key (ssh-ed25519 AAAA... name)")));
+        return Ok(back("/settings/ssh-keys", None, Some("that is not an ssh public key (ssh-ed25519 AAAA... name)")));
     }
     let key = format!("{} {}", parts[0], parts[1]);
     if let Err(e) = db::add_ssh_key(&state.db, &name, &key).await {
-        return Ok(back("/server", None, Some(&format!("not added: {e}"))));
+        return Ok(back("/settings/ssh-keys", None, Some(&format!("not added: {e}"))));
     }
     db::audit(&state.db, &user.username, "ssh.add", &name).await?;
     let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} added ssh key {name}", user.username), &serde_json::json!({"user": user.username, "action": "ssh.add"})).await;
@@ -704,7 +804,7 @@ pub async fn add_ssh_key(State(state): State<Shared>, user: User, Form(f): Form<
         db::kv_set(&state.db, "ssh.managed", "1").await?;
     }
     system::write_authorized_keys(&state).await?;
-    Ok(back("/server", Some(&format!("ssh key {name} authorized")), None))
+    Ok(back("/settings/ssh-keys", Some(&format!("ssh key {name} authorized")), None))
 }
 
 pub async fn delete_ssh_key(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
@@ -712,7 +812,7 @@ pub async fn delete_ssh_key(State(state): State<Shared>, user: User, Path(id): P
     db::audit(&state.db, &user.username, "ssh.delete", &name).await?;
     let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} removed ssh key {name}", user.username), &serde_json::json!({"user": user.username, "action": "ssh.delete"})).await;
     system::write_authorized_keys(&state).await?;
-    Ok(back("/server", Some(&format!("ssh key {name} removed")), None))
+    Ok(back("/settings/ssh-keys", Some(&format!("ssh key {name} removed")), None))
 }
 
 #[derive(Deserialize)]
@@ -726,39 +826,39 @@ pub async fn change_password(State(state): State<Shared>, user: User, Form(f): F
     let u = db::user_by_name(&state.db, &user.username).await?.ok_or_else(|| anyhow::anyhow!("user vanished"))?;
     if !crate::crypto::verify_password(&f.current, &u.password_hash) {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        return Ok(back("/server", None, Some("the current password is wrong")));
+        return Ok(back("/settings/account", None, Some("the current password is wrong")));
     }
     if f.new.chars().count() < 12 {
-        return Ok(back("/server", None, Some("the new password needs at least 12 characters")));
+        return Ok(back("/settings/account", None, Some("the new password needs at least 12 characters")));
     }
     if f.new != f.repeat {
-        return Ok(back("/server", None, Some("the two new passwords differ")));
+        return Ok(back("/settings/account", None, Some("the two new passwords differ")));
     }
     db::set_password(&state.db, &user.username, &crate::crypto::hash_password(&f.new)?).await?;
     db::audit(&state.db, &user.username, "account.password", "").await?;
     let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} changed the interface password", user.username), &serde_json::json!({"user": user.username, "action": "password"})).await;
-    Ok(back("/server", Some("password changed"), None))
+    Ok(back("/settings/account", Some("password changed"), None))
 }
 
 pub async fn backup_now(State(state): State<Shared>, user: User) -> R {
     if crate::server::backup::settings(&state).await.is_none() {
-        return Ok(back("/server", None, Some("backups are not configured")));
+        return Ok(back("/server/backups", None, Some("backups are not configured")));
     }
     db::audit(&state.db, &user.username, "server.backup", "").await?;
     match crate::server::backup::spawn_job(&state).await {
         Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
-        Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
+        Err(e) => Ok(back("/server/backups", None, Some(&e.to_string()))),
     }
 }
 
 pub async fn refresh_snapshots(State(state): State<Shared>, user: User) -> R {
     if crate::server::backup::settings(&state).await.is_none() {
-        return Ok(back("/server", None, Some("backups are not configured")));
+        return Ok(back("/server/backups", None, Some("backups are not configured")));
     }
     db::audit(&state.db, &user.username, "server.snapshots", "").await?;
     match crate::server::backup::refresh_snapshots(&state).await {
-        Ok(list) => Ok(back("/server", Some(&format!("{} snapshot(s) in the repository", list.len())), None)),
-        Err(e) => Ok(back("/server", None, Some(&format!("{e:#}")))),
+        Ok(list) => Ok(back("/server/backups", Some(&format!("{} snapshot(s) in the repository", list.len())), None)),
+        Err(e) => Ok(back("/server/backups", None, Some(&format!("{e:#}")))),
     }
 }
 
@@ -771,10 +871,10 @@ pub struct RestoreForm {
 /// Import the apps of a snapshot (an earlier installation) and restore their data.
 pub async fn restore_import(State(state): State<Shared>, user: User, Form(f): Form<RestoreForm>) -> R {
     if crate::server::backup::settings(&state).await.is_none() {
-        return Ok(back("/server", None, Some("backups are not configured")));
+        return Ok(back("/server/backups", None, Some("backups are not configured")));
     }
     if f.confirm.trim() != "restore" {
-        return Ok(back("/server", None, Some("type restore to confirm")));
+        return Ok(back("/server/backups", None, Some("type restore to confirm")));
     }
     db::audit(&state.db, &user.username, "server.restore", &f.snapshot).await?;
     let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} started a restore of all apps from snapshot {}", user.username, f.snapshot.trim()), &serde_json::json!({"user": user.username, "action": "server.restore"})).await;
@@ -782,7 +882,7 @@ pub async fn restore_import(State(state): State<Shared>, user: User, Form(f): Fo
     let snap = f.snapshot.trim().to_string();
     match jobs::spawn(&state, "restore-all", None, redact, move |s, log| crate::server::backup::restore_import(s, snap, log)).await {
         Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
-        Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
+        Err(e) => Ok(back("/server/backups", None, Some(&e.to_string()))),
     }
 }
 
@@ -796,12 +896,12 @@ pub async fn unban(State(state): State<Shared>, user: User, Form(f): Form<UnbanF
     let ok_jail = matches!(f.jail.as_str(), "sshd" | "pocketcloud-waf");
     let ok_ip = f.ip.parse::<std::net::IpAddr>().is_ok();
     if !ok_jail || !ok_ip {
-        return Ok(back("/server", None, Some("unknown jail or address")));
+        return Ok(back("/server/security", None, Some("unknown jail or address")));
     }
     db::audit(&state.db, &user.username, "server.unban", &format!("{} {}", f.jail, f.ip)).await?;
     match system::run("fail2ban-client", &["set", &f.jail, "unbanip", &f.ip]).await {
-        Ok(_) => Ok(back("/server", Some(&format!("{} unbanned", f.ip)), None)),
-        Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
+        Ok(_) => Ok(back("/server/security", Some(&format!("{} unbanned", f.ip)), None)),
+        Err(e) => Ok(back("/server/security", None, Some(&e.to_string()))),
     }
 }
 

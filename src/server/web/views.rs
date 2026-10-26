@@ -12,11 +12,20 @@ pub struct Base {
     pub error: Option<String>,
     pub version: &'static str,
     pub name: String,
+    /// highlighted entry of the main navigation: apps | server | alerts | settings
+    pub nav: &'static str,
 }
 
 impl Base {
     pub fn new(title: &str, user: &str, name: &str, flash: &super::auth::Flash) -> Base {
+        let nav = match title {
+            "Server" | "Backups" | "Security" => "server",
+            "Alerts" | "Events" | "Audit log" => "alerts",
+            "Notifications" | "VPN devices" | "SSH keys" | "Registries" | "Account" => "settings",
+            _ => "apps",
+        };
         Base {
+            nav,
             title: title.to_string(),
             user: user.to_string(),
             msg: flash.msg.clone(),
@@ -92,6 +101,10 @@ pub struct Dashboard {
     pub open_alerts: (usize, usize),
     /// "12 ssh_login, 3 waf_block" for the last 24 hours
     pub day_events: String,
+    pub apps_running: usize,
+    pub events_24h: i64,
+    pub disk_used_pct: u64,
+    pub mem_used_pct: u64,
 }
 
 pub struct BackupView {
@@ -194,6 +207,8 @@ pub fn scan_summary(json: &str) -> (String, bool, Vec<String>) {
 #[template(path = "app.html")]
 pub struct AppShow {
     pub base: Base,
+    /// overview | config | history
+    pub tab: &'static str,
     pub app: AppView,
     pub containers: Vec<ContainerInfo>,
     pub routes: Vec<RouteView>,
@@ -328,19 +343,47 @@ pub struct ServerPage {
     pub mem_used_pct: u64,
     pub disk_used_pct: u64,
     pub pending_checked: String,
-    pub aide_checked: String,
-    pub waf_available: bool,
-    pub waf_events: Vec<crate::server::system::WafEvent>,
-    pub jails: Vec<crate::server::system::JailStatus>,
     /// newest release on GitHub when it differs from the running version
     pub newer_release: String,
+    pub services_ok: usize,
+}
+
+#[derive(Template)]
+#[template(path = "server_backups.html")]
+pub struct BackupsPage {
+    pub base: Base,
     pub backup: BackupView,
     pub snapshots: Vec<crate::server::backup::Snapshot>,
     pub backup_form: BackupForm,
+}
+
+#[derive(Template)]
+#[template(path = "server_security.html")]
+pub struct SecurityPage {
+    pub base: Base,
+    pub waf_available: bool,
+    pub waf_events: Vec<crate::server::system::WafEvent>,
+    pub jails: Vec<crate::server::system::JailStatus>,
+    pub banned_now: usize,
     pub falco_on: bool,
+    pub aide_checked: String,
+    pub aide_report: String,
+    pub audit_summary: String,
+}
+
+#[derive(Template)]
+#[template(path = "settings_ssh.html")]
+pub struct SshKeysPage {
+    pub base: Base,
     pub ssh_keys: Vec<SshKeyView>,
     pub ssh_managed: bool,
     pub ssh_user: String,
+}
+
+#[derive(Template)]
+#[template(path = "settings_account.html")]
+pub struct AccountPage {
+    pub base: Base,
 }
 
 pub struct SshKeyView {
@@ -378,6 +421,30 @@ pub struct AlertsPage {
     pub base: Base,
     pub open: Vec<AlertView>,
     pub resolved: Vec<AlertView>,
+    pub notify_configured: bool,
+    pub channels: String,
+    pub notify_last: String,
+    pub notify_error: String,
+    pub heartbeat: String,
+    pub metrics: Vec<MetricRow>,
+}
+
+pub struct MetricRow {
+    pub name: String,
+    pub label: String,
+    pub unit: String,
+    pub min: String,
+    pub avg: String,
+    pub max: String,
+    pub now: String,
+    /// polyline points of the last 24 hours, 0..100 of the box
+    pub spark: String,
+}
+
+#[derive(Template)]
+#[template(path = "settings_notifications.html")]
+pub struct NotificationsPage {
+    pub base: Base,
     pub t: crate::server::alerts::Thresholds,
     pub notify_configured: bool,
     pub channels: String,
@@ -385,8 +452,6 @@ pub struct AlertsPage {
     pub notify_last: String,
     pub notify_error: String,
     pub heartbeat: String,
-    /// (metric, "min / avg / max")
-    pub metrics: Vec<(String, String)>,
 }
 
 pub struct NotifyForm {

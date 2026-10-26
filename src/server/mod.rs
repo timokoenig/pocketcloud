@@ -261,7 +261,7 @@ async fn refresh_public_ips(state: &Shared) -> Result<()> {
 async fn daemon(config: Config) -> Result<()> {
     let state = build_state(config).await?;
     db::fail_stale_jobs(&state.db).await?;
-    // notification settings: the config file seeds the database once; from then on the Alerts page owns them
+    // notification settings: the config file seeds the database once; from then on the Notifications settings page owns them
     if db::kv_get(&state.db, "notify.settings").await?.is_none() && (state.config.notify.any() || !state.config.notify.heartbeat_url.is_empty()) {
         notify::save_settings(&state, &state.config.notify).await?;
         tracing::info!("notification settings taken from the config file into the database");

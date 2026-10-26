@@ -1,12 +1,14 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>login · {{ name }}</title><link rel="stylesheet" href="/static/app.css"></head>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Log in · {{ name }}</title><link rel="stylesheet" href="/static/app.css"></head>
 <body class="login">
-<main class="narrow">
-  <h1>pocketcloud <span class="muted">{{ name }}</span></h1>
-  {% if let Some(e) = error %}<div class="flash err">{{ e }}</div>{% endif %}
-  <form method="post" action="/login" class="card stack">
-    <label>Username <input name="username" autocomplete="username" required autofocus></label>
-    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-    <button class="primary">Log in</button>
+<div class="login-box">
+  <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="22" height="22"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>pocketcloud<span class="name">{{ name }}</span></div>
+  {% if let Some(e) = error %}<div class="alert err compact"><div class="body">{{ e }}</div></div>{% endif %}
+  <form method="post" action="/login" class="card">
+    <div class="card-body">
+      <label class="field"><span>Username</span><input name="username" autocomplete="username" required autofocus></label>
+      <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn btn-primary" style="width:100%">Log in</button>
+    </div>
   </form>
-</main>
+</div>
 </body></html>

@@ -1,182 +1,87 @@
 {% extends "layout.html" %}
 {% block content %}
-<h1>Server</h1>
-<div class="grid">
+<div class="page-head">
+  <div><h1>Server</h1><p class="desc">{% if !host.hostname.is_empty() %}{{ host.hostname }} · {% endif %}https://{{ interface_host }}</p></div>
+</div>
+{% include "_tabs_server.html" %}
+{% if host.reboot_required %}<div class="alert warn"><div class="body"><div class="title">Reboot required</div>Pending updates need a reboot; reboots never happen on their own.</div></div>{% endif %}
+
+<div class="stats">
+  <div class="stat"><div class="label">Uptime</div><div class="value">{{ uptime }}</div><div class="sub">load {{ host.load }}</div></div>
+  <div class="stat"><div class="label">Memory</div><div class="value">{{ mem_used_pct }}<small>% of {{ host.mem_total_mb }} MB</small></div><div class="meter{% if mem_used_pct >= 95 %} bad{% else if mem_used_pct >= 85 %} warn{% endif %}"><i style="width:{{ mem_used_pct }}%"></i></div></div>
+  <div class="stat"><div class="label">Disk</div><div class="value">{{ disk_used_pct }}<small>% of {{ "{:.0}"|format(host.disk_total_gb) }} GB</small></div><div class="meter{% if disk_used_pct >= 90 %} bad{% else if disk_used_pct >= 80 %} warn{% endif %}"><i style="width:{{ disk_used_pct }}%"></i></div></div>
+  <div class="stat{% if services_ok < host.services.len() %} bad{% endif %}"><div class="label">Services</div><div class="value">{{ services_ok }}<small>of {{ host.services.len() }} running</small></div></div>
+</div>
+
+<div class="grid-2">
   <div class="card">
-    <h2>Host</h2>
-    <dl>
-      <dt>Hostname</dt><dd>{{ host.hostname }}</dd>
-      <dt>Addresses</dt><dd>{% for ip in public_ips %}<div>{{ ip }}</div>{% endfor %}</dd>
-      <dt>Uptime</dt><dd>{{ uptime }} · load {{ host.load }}</dd>
-      <dt>Memory</dt><dd>{{ mem_used_pct }}% of {{ host.mem_total_mb }} MB</dd>
-      <dt>Disk</dt><dd>{{ disk_used_pct }}% of {{ "{:.0}"|format(host.disk_total_gb) }} GB</dd>
-      <dt>Daemon</dt><dd>{{ base.version }}, started {{ daemon_started }}{% if !newer_release.is_empty() %} · <span class="tag err">release {{ newer_release }} available</span> <span class="muted small">pocketcloud upgrade</span>{% endif %}</dd>
-      <dt>Interface</dt><dd>https://{{ interface_host }} · VPN port {{ vpn_port }}/udp</dd>
-    </dl>
-  </div>
-  <div class="card">
-    <h2>Services</h2>
-    <ul class="plain">
-    {% for s in host.services %}<li><span class="dot {% if s.1 %}ok{% else %}bad{% endif %}"></span>{{ s.0 }}</li>{% endfor %}
-    </ul>
-  </div>
-  <div class="card">
-    <h2>Certificates</h2>
-    <table class="compact"><tbody>
-    {% for c in certs %}
-    <tr><td>*.{{ c.domain }}</td><td>{% if c.last_error.is_empty() %}until {{ c.not_after }} ({{ c.days_left }} days){% else %}<span class="status failed">error</span> <span class="small">{{ c.last_error }}</span>{% endif %}</td></tr>
-    {% endfor %}
-    {% if certs.is_empty() %}<tr><td class="muted">not issued yet{% for d in domains %} · {{ d }}{% endfor %}</td></tr>{% endif %}
-    </tbody></table>
-    <form method="post" action="/server/renew-certificates" class="inline" data-confirm="Request new certificates now?"><button>Renew now</button></form>
-  </div>
-  <div class="card">
-    <h2>Updates</h2>
-    {% if host.reboot_required %}<div class="flash warn">reboot required</div>{% endif %}
-    <p>{{ host.pending_updates.len() }} packages pending <span class="muted small">(checked {{ pending_checked }})</span></p>
-    {% if !host.pending_updates.is_empty() %}<p class="small muted">{{ host.pending_updates.join(", ") }}</p>{% endif %}
-    <div class="row">
-      <form method="post" action="/server/check-updates" class="inline"><button>Check</button></form>
-      <form method="post" action="/server/upgrade" class="inline" data-confirm="Install all pending updates now?"><button>Upgrade</button></form>
-      <form method="post" action="/server/reboot" class="inline row"><input name="confirm" placeholder="type reboot" class="short" required autocomplete="off"><button class="danger">Reboot</button></form>
+    <div class="card-head"><div><div class="card-title">Host</div></div></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>Hostname</dt><dd>{{ host.hostname }}</dd>
+        <dt>Addresses</dt><dd class="mono lines">{% for ip in public_ips %}<div>{{ ip }}</div>{% endfor %}</dd>
+        <dt>Interface</dt><dd class="mono">https://{{ interface_host }}</dd>
+        <dt>VPN</dt><dd>UDP port {{ vpn_port }}</dd>
+        <dt>Domains</dt><dd>{{ domains.join(", ") }}</dd>
+        <dt>Daemon</dt><dd>{{ base.version }}, started {{ daemon_started }}</dd>
+      </dl>
     </div>
-    <p class="muted small">Security updates install automatically every day; reboots never happen on their own.</p>
   </div>
-</div>
-<h2>Backups</h2>
-<div class="card">
-{% if backup.enabled %}
-  {% if !backup.last_error.is_empty() %}<div class="flash err">last run failed: {{ backup.last_error }}</div>{% endif %}
-  <dl>
-    <dt>Repository</dt><dd><code>{{ backup.repo }}</code></dd>
-    <dt>Schedule</dt><dd>nightly at {{ backup.time }} server time · snapshots are kept for 30 days, then deleted · integrity check on Sundays</dd>
-    <dt>Last success</dt><dd>{{ backup.last_ok }}{% if !backup.last_snapshot.is_empty() %} · snapshot <code>{{ backup.last_snapshot }}</code>{% endif %}</dd>
-    <dt>Snapshots</dt><dd>{% if backup.snapshots.is_empty() %}none yet{% else %}{{ backup.snapshots }}{% if !backup.size.is_empty() %} · {{ backup.size }} in the backup set{% endif %}{% endif %}</dd>
-    <dt>Last check</dt><dd>{{ backup.last_check }}</dd>
-  </dl>
-  <form method="post" action="/server/backup" class="inline"><button>Back up now</button></form>
-  <form method="post" action="/server/snapshots" class="inline"><button>Refresh snapshots</button></form>
-  <details class="danger-zone">
-    <summary>Restore apps from a snapshot</summary>
-    {% if snapshots.is_empty() %}<p class="muted small">No snapshot list yet; press <em>Refresh snapshots</em>.</p>{% else %}
-    <form method="post" action="/server/restore" class="row">
-      <label>Snapshot <select name="snapshot">{% for s in snapshots %}<option value="{{ s.id }}">{{ s.time }} · {{ s.id }}</option>{% endfor %}</select></label>
-      <label>Type <code>restore</code> to confirm <input name="confirm" required autocomplete="off"></label>
-      <button class="danger">Restore</button>
-    </form>
-    <p class="muted small">For a rebuilt server: imports every app of the snapshot that does not exist here (compose file, routes, secrets, settings), deploys it and restores its data. Needs the same master key, so set up the new server with the old recovery phrase. Apps that already exist are left alone; restore their data from their page.</p>
-    {% endif %}
-  </details>
-  <p class="muted small">Contents: the pocketcloud database, the server config, and for every app with backups on its volumes, files and a dump of each postgres or mysql service. Never the master key: the recovery phrase is its backup. Restore: <code>pocketcloud backup &lt;name&gt; password</code> gives the restic password.</p>
-  <details>
-    <summary>Change settings or switch off</summary>
-{% else %}
-  <p class="muted">Backups are off. Create a bucket and S3 credentials in Hetzner Object Storage, enter them here, and every night at the chosen hour restic stores the database, the server config and every app's volumes, files and database dumps, encrypted with a key derived from the master key. Snapshots are kept 30 days.</p>
-  <details open>
-    <summary>Set up backups</summary>
-{% endif %}
-    <form method="post" action="/server/backup-settings" class="grid thresholds" autocomplete="off">
-      <label>S3 endpoint <input name="s3_endpoint" value="{{ backup_form.s3_endpoint }}" required></label>
-      <label>Bucket <input name="bucket" value="{{ backup_form.bucket }}" required></label>
-      <label>Access key <input name="access_key" value="{{ backup_form.access_key }}" required autocomplete="off"></label>
-      <label>Secret key {% if backup_form.has_secret %}<span class="muted small">(set; leave empty to keep)</span>{% endif %}<textarea name="secret_key" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
-      <label>Hour of the nightly run (server time) <input name="hour" type="number" min="0" max="23" value="{{ backup_form.hour }}"></label>
-      <div><button class="primary">Save</button></div>
-    </form>
-{% if backup.enabled %}
-    <form method="post" action="/server/backup-disable" class="row"><label>Type <code>disable</code> to switch backups off <input name="confirm" class="short" required autocomplete="off"></label><button class="danger">Disable</button></form>
-{% endif %}
-  </details>
-</div>
-
-<h2>Pocketcloud</h2>
-<div class="card">
-  <p>Running {{ base.version }}{% if !newer_release.is_empty() %} · <span class="tag err">release {{ newer_release }} available</span>{% endif %}</p>
-  <div class="row">
-    <form method="post" action="/server/upgrade-pocketcloud" class="inline row" data-confirm="Download the release, verify it and restart pocketcloud? Apps keep running."><input name="version" placeholder="newest" class="short"><button class="primary">Upgrade</button></form>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Services</div></div></div>
+    <div class="card-body" style="padding-top:12px">
+      <ul class="plain">
+      {% for s in host.services %}<li><span class="dot {% if s.1 %}ok{% else %}bad{% endif %}"></span>{{ s.0 }}<span class="right">{% if s.1 %}running{% else %}down{% endif %}</span></li>{% endfor %}
+      </ul>
+    </div>
   </div>
-  <p class="muted small">The daemon downloads the release from GitHub, verifies the published checksums, runs the installer and restarts; the interface is back within a minute, apps are not touched.</p>
-  <details>
-    <summary>Install an uploaded build (development)</summary>
-    <form method="post" action="/server/upload-build" enctype="multipart/form-data" class="row" data-confirm="Install the uploaded build and restart pocketcloud?">
-      <label>pocketcloud binary <input type="file" name="pocketcloud" required></label>
-      <label>caddy binary (optional) <input type="file" name="caddy"></label>
-      <button>Install</button>
-    </form>
-  </details>
-</div>
-
-<h2>SSH keys</h2>
-<div class="card">
-  <p class="muted small">Keys that may log in as <code>{{ ssh_user }}</code> over the VPN. {% if ssh_managed %}Only the keys below are authorized.{% else %}The installer's key is still authorized until the first key is added here or setup finishes.{% endif %}</p>
-  <table class="compact">
-    <tbody>
-    {% for k in ssh_keys %}
-    <tr><td><code>{{ k.name }}</code></td><td class="small muted">{{ k.fingerprint }}</td><td class="small muted">{{ k.created }}</td><td><form method="post" action="/server/ssh-keys/{{ k.id }}/delete" class="inline" data-confirm="Remove ssh key {{ k.name }}?"><button class="link danger">remove</button></form></td></tr>
-    {% endfor %}
-    <tr>
-      <form method="post" action="/server/ssh-keys" autocomplete="off">
-      <td><input name="name" placeholder="laptop" required class="short"></td>
-      <td colspan="2"><input name="public_key" placeholder="ssh-ed25519 AAAA..." required class="wide" autocomplete="off" spellcheck="false"></td>
-      <td><button>Add</button></td>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Certificates</div></div><form method="post" action="/server/renew-certificates" class="inline" data-confirm="Request new certificates now?"><button class="btn btn-sm">Renew now</button></form></div>
+    <div class="card-body" style="padding-top:12px">
+      <ul class="plain">
+      {% for c in certs %}
+      <li><span class="dot {% if c.last_error.is_empty() %}ok{% else %}bad{% endif %}"></span><span class="text"><span class="mono">*.{{ c.domain }}</span><span class="sub">{% if c.last_error.is_empty() %}valid until {{ c.not_after }}{% else %}<span class="text-destructive">{{ c.last_error }}</span>{% endif %}</span></span>{% if c.last_error.is_empty() %}<span class="right">{{ c.days_left }} days left</span>{% endif %}</li>
+      {% endfor %}
+      {% if certs.is_empty() %}<li class="muted">Not issued yet{% for d in domains %} · {{ d }}{% endfor %}</li>{% endif %}
+      </ul>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">System updates</div><div class="card-desc">Security updates install daily on their own. Checked {{ pending_checked }}.</div></div></div>
+    <div class="card-body">
+      <p>{% if host.pending_updates.is_empty() %}<span class="badge success plain">up to date</span>{% else %}<span class="badge warning plain">{{ host.pending_updates.len() }} package{% if host.pending_updates.len() != 1 %}s{% endif %} pending</span>{% endif %}</p>
+      {% if !host.pending_updates.is_empty() %}<p class="small muted mono" style="margin-top:8px;word-break:break-word">{{ host.pending_updates.join(", ") }}</p>{% endif %}
+      <div class="row" style="margin-top:16px">
+        <form method="post" action="/server/check-updates" class="inline"><button class="btn btn-sm">Check</button></form>
+        <form method="post" action="/server/upgrade" class="inline" data-confirm="Install all pending updates now?"><button class="btn btn-sm">Install updates</button></form>
+      </div>
+    </div>
+    <div class="card-foot">
+      <form method="post" action="/server/reboot" class="form-row">
+        <label class="field"><span>Type <code>reboot</code> to confirm</span><input name="confirm" class="confirm-input" required autocomplete="off"></label>
+        <div class="field fixed"><button class="btn btn-sm btn-danger">Reboot</button></div>
       </form>
-    </tr>
-    </tbody>
-  </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><div class="card-title">Pocketcloud</div><div class="card-desc">Running {{ base.version }}{% if !newer_release.is_empty() %} · <span class="badge warning plain">release {{ newer_release }} available</span>{% endif %}</div></div></div>
+    <div class="card-body">
+      <form method="post" action="/server/upgrade-pocketcloud" class="form-row" data-confirm="Download the release, verify it and restart pocketcloud? Apps keep running.">
+        <label class="field"><span>Version</span><input name="version" placeholder="newest" class="w-sm"></label>
+        <div class="field fixed"><button class="btn btn-primary">Upgrade</button></div>
+      </form>
+      <p class="muted small" style="margin-top:10px">Downloaded from GitHub and checked against the published checksums; the interface is back within a minute, apps are not touched.</p>
+      <details class="disclosure" style="margin-top:16px">
+        <summary>Install an uploaded build</summary>
+        <div class="content">
+          <form method="post" action="/server/upload-build" enctype="multipart/form-data" class="form-row" data-confirm="Install the uploaded build and restart pocketcloud?">
+            <label class="field"><span>pocketcloud binary</span><input type="file" name="pocketcloud" required></label>
+            <label class="field"><span>caddy binary <span class="hint">optional</span></span><input type="file" name="caddy"></label>
+            <div class="field fixed"><button class="btn">Install</button></div>
+          </form>
+        </div>
+      </details>
+    </div>
+  </div>
 </div>
-
-<h2>Account</h2>
-<div class="card">
-  <form method="post" action="/account/password" class="row" autocomplete="off">
-    <label>Current password <input name="current" type="password" required autocomplete="current-password"></label>
-    <label>New password <input name="new" type="password" required minlength="12" autocomplete="new-password"></label>
-    <label>Repeat <input name="repeat" type="password" required autocomplete="new-password"></label>
-    <button>Change password</button>
-  </form>
-</div>
-
-<h2>Runtime detection</h2>
-<div class="card">
-  <form method="post" action="/server/falco" class="row">
-    {% if falco_on %}<input type="hidden" name="value" value="off"><button class="toggle on" title="Falco is on; click to switch it off">Falco on</button>{% else %}<input type="hidden" name="value" value="on"><button class="toggle" title="Falco is off; click to switch it on">Falco off</button>{% endif %}
-    <span class="muted small">Falco watches syscalls with an eBPF probe: shells in containers, sensitive file reads, unexpected network activity, privilege escalation. About 150 MB of memory. Its events are on the Events page and alert by priority.</span>
-  </form>
-</div>
-<h2>Web application firewall{% if !waf_available %} <span class="status failed">unavailable</span>{% endif %}</h2>
-{% if !waf_available %}
-<p class="muted">The installed Caddy has no Coraza module, public routes run without the WAF. <code>pocketcloud upgrade &lt;name&gt;</code> installs the bundled build.</p>
-{% else %}
-<h3>Banned clients</h3>
-<table class="compact">
-  <thead><tr><th>Jail</th><th>Banned now</th><th>Ever</th><th></th></tr></thead>
-  <tbody>
-  {% for j in jails %}
-  <tr>
-    <td><code>{{ j.jail }}</code></td>
-    <td class="small">{% if j.banned.is_empty() %}<span class="muted">none</span>{% else %}{% for ip in j.banned %}<form method="post" action="/server/unban" class="inline"><input type="hidden" name="jail" value="{{ j.jail }}"><input type="hidden" name="ip" value="{{ ip }}"><code>{{ ip }}</code> <button class="link" title="lift the ban">unban</button></form> {% endfor %}{% endif %}</td>
-    <td class="small muted">{{ j.total }}</td>
-    <td></td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table>
-<p class="muted small">10 WAF blocks in 10 minutes, or 3 failed ssh logins, ban the client for an hour at the firewall.</p>
-<h3>Blocked requests</h3>
-{% if waf_events.is_empty() %}
-<p class="muted">no blocked requests in the last 7 days</p>
-{% else %}
-<table class="compact">
-  <thead><tr><th>Time</th><th>Client</th><th>Host</th><th>Request</th><th>Id</th></tr></thead>
-  <tbody>
-  {% for e in waf_events %}
-  <tr><td class="muted small">{{ e.at }}</td><td class="small">{{ e.client }}</td><td class="small">{{ e.host }}</td><td class="small">{{ e.uri }}</td><td class="small muted">{{ e.id }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
-{% endif %}
-<h2>AIDE file integrity <span class="muted small">last run {{ aide_checked }}</span></h2>
-<pre class="log small">{{ host.aide_report }}</pre>
-<h2>Audit events this week</h2>
-<pre class="log small">{{ host.audit_summary }}</pre>
 {% endblock %}

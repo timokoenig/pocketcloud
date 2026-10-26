@@ -1,8 +1,8 @@
 # Troubleshooting
 
-Start with the interface if the tunnel works: the dashboard, the Alerts and Events pages and the server page say
+Start with the interface if the tunnel works: the dashboard, the Alerts page with its Events and Audit tabs, and the Server page with its Backups and Security tabs say
 what is going on. Without the tunnel, the Hetzner console shows whether the server runs, and its rescue system is
-the way in (see "Every device is gone"). ssh works over the VPN with a key added on the server page.
+the way in (see "Every device is gone"). ssh works over the VPN with a key added under Settings → SSH keys.
 
 ## The tunnel connects, but the interface name does not resolve
 
@@ -78,7 +78,7 @@ left the package database half done. Newer versions start apt as a transient uni
 1. Install the current build: *Upgrade* on the server page.
 2. Run *Server → Upgrade* again. It finishes the interrupted dpkg step first, then installs the rest.
 
-To repair by hand instead: ssh in with a key from the server page, then `sudo dpkg --configure -a` and
+To repair by hand instead: ssh in with a key added under Settings → SSH keys, then `sudo dpkg --configure -a` and
 `sudo apt-get -f install`.
 
 ## Certificates are not renewed, the log says the challenge nameserver did not answer
@@ -91,11 +91,11 @@ fix the records in the Hetzner console (setup writes them; a rebuild rewrites th
 
 ## A request to an app gets a 403 it should not
 
-The WAF blocked it. The server page lists blocked requests with client, request and transaction id; the matching
+The WAF blocked it. Server → Security lists blocked requests with client, request and transaction id; the matching
 rule is in Caddy's log (`journalctl -u caddy -g <id>`). Switch the WAF off for that route on the app page if the app legitimately sends what the
 rule flags (raw SQL in a form, large JSON bodies over 13 MB, unusual headers).
 
-## The server page says the WAF is unavailable
+## The Security tab says the WAF is unavailable
 
 The installed Caddy is the stock package without the Coraza module; public routes run without the WAF.
 *Upgrade* on the server page installs the bundled build. For a local build: `scripts/build-caddy.sh` and the
@@ -119,7 +119,7 @@ and restarting until the next deploy or a stop.
 
 Almost always the tunnel is off on this device: without it, 10.8.0.1 is routed to your local network and
 something there refuses. Check the WireGuard app first. If the tunnel is up and the interface on 443 works but
-22 is refused, fail2ban banned your VPN address; lift it on the server page under *Banned clients*. The VPN
+22 is refused, fail2ban banned your VPN address; lift it under Server → Security, *Banned clients*. The VPN
 range is excluded from bans since 2026-10-26, and the CLI checks reachability with a real ssh login rather than
 a bare TCP connect, which the aggressive sshd jail can count as a failure.
 
@@ -139,6 +139,6 @@ Console access alone is not enough on purpose: without the phrase, `recover` doe
 
 ## Locked out: no tunnel, no ssh
 
-Another device of yours still has the tunnel: use it, add a replacement device on the VPN page. No device at
+Another device of yours still has the tunnel: use it, add a replacement device under Settings → VPN devices. No device at
 all: "Every device is gone" above. If the server does not react at all, reboot it in the Hetzner console; the
 daemon brings apps, tunnel and firewall back on its own.

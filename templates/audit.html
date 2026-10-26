@@ -1,12 +1,19 @@
 {% extends "layout.html" %}
 {% block content %}
-<h1>Audit log</h1>
-<table class="compact">
-  <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead>
-  <tbody>
-  {% for e in entries %}
-  <tr><td class="muted small">{{ e.at }}</td><td>{{ e.username }}</td><td><code>{{ e.action }}</code></td><td class="small">{{ e.detail }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
+<div class="page-head">
+  <div><h1>Alerts</h1><p class="desc">Every action taken in the interface.</p></div>
+</div>
+{% include "_tabs_alerts.html" %}
+<div class="card">
+  {% if entries.is_empty() %}<div class="card-body"><p class="muted">No entries yet.</p></div>{% else %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+    <tr><td class="time">{{ e.at }}</td><td>{{ e.username }}</td><td><span class="badge outline plain mono">{{ e.action }}</span></td><td class="wrap">{{ e.detail }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</div>
 {% endblock %}

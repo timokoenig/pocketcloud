@@ -75,6 +75,18 @@ pub async fn create(State(state): State<Shared>, user: User, Form(f): Form<NewAp
 }
 
 pub async fn show(State(state): State<Shared>, user: User, Path(id): Path<i64>, Query(f): Query<Flash>) -> R {
+    show_tab(state, user, id, f, "overview").await
+}
+
+pub async fn show_config(State(state): State<Shared>, user: User, Path(id): Path<i64>, Query(f): Query<Flash>) -> R {
+    show_tab(state, user, id, f, "config").await
+}
+
+pub async fn show_history(State(state): State<Shared>, user: User, Path(id): Path<i64>, Query(f): Query<Flash>) -> R {
+    show_tab(state, user, id, f, "history").await
+}
+
+async fn show_tab(state: Shared, user: User, id: i64, f: Flash, tab: &'static str) -> R {
     let app = load_app(&state, id).await?;
     let containers = match &state.docker {
         Some(d) => docker::containers_of(d, &app.name).await.unwrap_or_default(),
@@ -112,6 +124,7 @@ pub async fn show(State(state): State<Shared>, user: User, Path(id): Path<i64>, 
         .unwrap_or_default();
     html(views::AppShow {
         base: views::Base::new(&app.name, &user.username, &state.config.name, &f),
+        tab,
         app: views::AppView::from(&app),
         containers,
         routes,
@@ -141,7 +154,7 @@ pub struct AppRestoreForm {
 /// Put volumes, files and database dumps of this app back from a snapshot.
 pub async fn restore(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<AppRestoreForm>) -> R {
     let app = load_app(&state, id).await?;
-    let page = format!("/apps/{id}");
+    let page = format!("/apps/{id}/config");
     let backup_cfg = crate::server::backup::settings(&state).await;
     if backup_cfg.is_none() {
         return Ok(back(&page, None, Some("backups are not configured")));
@@ -171,7 +184,7 @@ pub async fn set_backup(State(state): State<Shared>, user: User, Path(id): Path<
     let on = f.value == "on";
     db::set_app_backup(&state.db, id, on).await?;
     db::audit(&state.db, &user.username, "app.backup", &format!("{} {on}", app.name)).await?;
-    Ok(back(&format!("/apps/{id}"), Some(if on { "app included in the nightly backup" } else { "app excluded from backups" }), None))
+    Ok(back(&format!("/apps/{id}/config"), Some(if on { "app included in the nightly backup" } else { "app excluded from backups" }), None))
 }
 
 /// Route hints, a suggested first route, the environment table and the unset placeholders, all from the compose file.
@@ -225,7 +238,7 @@ pub struct EgressForm {
 /// Internet access of the app's containers; applied to the firewall at once.
 pub async fn set_egress(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<EgressForm>) -> R {
     let app = load_app(&state, id).await?;
-    let page = format!("/apps/{id}");
+    let page = format!("/apps/{id}/config");
     let egress = match f.mode.as_str() {
         "all" => "all".to_string(),
         "none" => "none".to_string(),
@@ -263,7 +276,7 @@ pub struct EnvForm {
 /// Set one `environment` entry in the compose file.
 pub async fn put_env(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<EnvForm>) -> R {
     let app = load_app(&state, id).await?;
-    let page = format!("/apps/{id}");
+    let page = format!("/apps/{id}/config");
     let key = f.key.trim();
     if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || key.starts_with(|c: char| c.is_ascii_digit()) {
         return Ok(back(&page, None, Some("variable names are letters, digits and underscores")));
@@ -283,7 +296,7 @@ pub async fn put_env(State(state): State<Shared>, user: User, Path(id): Path<i64
 
 pub async fn delete_env(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<EnvForm>) -> R {
     let app = load_app(&state, id).await?;
-    let page = format!("/apps/{id}");
+    let page = format!("/apps/{id}/config");
     let updated = match compose::set_environment(&app.compose, f.service.trim(), f.key.trim(), None) {
         Ok(c) => c,
         Err(e) => return Ok(back(&page, None, Some(&format!("{e:#}")))),
@@ -385,7 +398,7 @@ pub struct RemoveForm {
 pub async fn remove(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<RemoveForm>) -> R {
     let app = load_app(&state, id).await?;
     if f.confirm.trim() != app.name {
-        return Ok(back(&format!("/apps/{id}"), None, Some("type the app name to confirm removal")));
+        return Ok(back(&format!("/apps/{id}/config"), None, Some("type the app name to confirm removal")));
     }
     let volumes = f.volumes.is_some();
     db::audit(&state.db, &user.username, "app.remove", &format!("{} volumes={volumes}", app.name)).await?;
@@ -393,7 +406,7 @@ pub async fn remove(State(state): State<Shared>, user: User, Path(id): Path<i64>
     let redact = deploy::secret_values(&state, app.id).await?;
     match jobs::spawn(&state, "remove", Some(id), redact, move |s, log| deploy::remove(s, id, volumes, log)).await {
         Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
-        Err(e) => Ok(back(&format!("/apps/{id}"), None, Some(&e.to_string()))),
+        Err(e) => Ok(back(&format!("/apps/{id}/config"), None, Some(&e.to_string()))),
     }
 }
 
@@ -487,7 +500,7 @@ pub struct SecretForm {
 pub async fn put_secret(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<SecretForm>) -> R {
     let app = load_app(&state, id).await?;
     let key = f.key.trim().to_string();
-    let page = format!("/apps/{id}");
+    let page = format!("/apps/{id}/config");
     if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || key.starts_with(|c: char| c.is_ascii_digit()) {
         return Ok(back(&page, None, Some("secret names are environment variable names: letters, digits, underscores")));
     }
@@ -517,7 +530,7 @@ pub async fn delete_secret(State(state): State<Shared>, user: User, Path(id): Pa
     let app = load_app(&state, id).await?;
     db::delete_secret(&state.db, id, &f.key).await?;
     db::audit(&state.db, &user.username, "secret.delete", &format!("{} {}", app.name, f.key)).await?;
-    Ok(back(&format!("/apps/{id}"), Some("secret removed, deploy to apply"), None))
+    Ok(back(&format!("/apps/{id}/config"), Some("secret removed, deploy to apply"), None))
 }
 
 #[derive(Deserialize)]

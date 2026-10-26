@@ -1,22 +1,29 @@
 {% extends "layout.html" %}
 {% block content %}
-<h1>Registries</h1>
-<p class="muted">Credentials for private images. Every pull uses them; stored encrypted.</p>
-<table>
-  <thead><tr><th>Registry</th><th>Username</th><th>Updated</th><th></th></tr></thead>
-  <tbody>
-  {% for r in registries %}
-  <tr><td><strong>{{ r.host }}</strong></td><td>{{ r.username }}</td><td class="muted small">{{ r.updated }}</td>
-  <td><form method="post" action="/registries/{{ r.id }}/delete" class="inline" data-confirm="Remove credentials for {{ r.host }}?"><button class="link danger">remove</button></form></td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-<h2>Add or replace</h2>
-<form method="post" action="/registries" class="row" autocomplete="off">
-  <label>Registry <input name="host" placeholder="ghcr.io" required></label>
-  <label>Username <input name="username" required></label>
-  <label>Token <textarea name="password" class="secret" rows="1" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
-  <button class="primary">Save</button>
-</form>
-<p class="muted small">For ghcr.io use a classic personal access token with <code>read:packages</code>.</p>
+<div class="page-head">
+  <div><h1>Settings</h1><p class="desc">Registries</p></div>
+</div>
+{% include "_tabs_settings.html" %}
+<div class="card">
+  <div class="card-head"><div><div class="card-title">Registry credentials</div><div class="card-desc">Used for every image pull, stored sealed. For ghcr.io use a classic personal access token with <code>read:packages</code>.</div></div></div>
+  {% if !registries.is_empty() %}
+  <div class="card-body flush"><div class="table-wrap"><table>
+    <thead><tr><th>Registry</th><th>Username</th><th class="right">Updated</th><th></th></tr></thead>
+    <tbody>
+    {% for r in registries %}
+    <tr><td class="mono"><strong>{{ r.host }}</strong></td><td>{{ r.username }}</td><td class="time right">{{ r.updated }}</td>
+    <td class="actions"><form method="post" action="/settings/registries/{{ r.id }}/delete" class="inline" data-confirm="Remove credentials for {{ r.host }}?"><button class="btn btn-ghost btn-sm btn-danger">Remove</button></form></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div></div>
+  {% else %}<div class="card-body"><p class="muted">No credentials yet; public images pull without them.</p></div>{% endif %}
+  <div class="card-foot">
+    <form method="post" action="/settings/registries" class="form-row" autocomplete="off">
+      <label class="field"><span>Registry</span><input name="host" placeholder="ghcr.io" required class="mono"></label>
+      <label class="field"><span>Username</span><input name="username" required></label>
+      <label class="field grow"><span>Token</span><textarea name="password" class="secret" rows="1" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+      <div class="field fixed"><button class="btn btn-primary">Save</button></div>
+    </form>
+  </div>
+</div>
 {% endblock %}

@@ -1,9 +1,9 @@
 {% extends "layout.html" %}
 {% block content %}
-<p><a href="/apps/{{ app.id }}">← {{ app.name }}</a></p>
-<h1>{{ app.name }} · compose file</h1>
-<form method="post" action="/apps/{{ app.id }}/edit" class="stack">
-  <textarea name="compose" rows="30" spellcheck="false" required>{{ compose }}</textarea>
-  <div class="row"><button class="primary">Save</button> <span class="muted small">saving does not deploy</span></div>
+<div class="crumbs"><a href="/">Apps</a><span>/</span><a href="/apps/{{ app.id }}">{{ app.name }}</a><span>/</span><span>Compose file</span></div>
+<div class="page-head"><div><h1>{{ app.name }} <span class="muted" style="font-weight:400">compose file</span></h1><p class="desc">Saving does not deploy.</p></div></div>
+<form method="post" action="/apps/{{ app.id }}/edit" class="card">
+  <div class="card-body"><textarea name="compose" rows="30" spellcheck="false" required class="code">{{ compose }}</textarea></div>
+  <div class="card-foot row end"><a class="btn btn-ghost" href="/apps/{{ app.id }}">Cancel</a><button class="btn btn-primary">Save</button></div>
 </form>
 {% endblock %}
