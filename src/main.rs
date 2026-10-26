@@ -37,7 +37,7 @@ fn main() -> anyhow::Result<()> {
             }
             cli::Command::RenderCompose { file, app, index } => {
                 let text = std::fs::read_to_string(&file)?;
-                let r = server::compose::render(&text, &app, index, &format!("/run/pocketcloud/env/{app}.env"))?;
+                let r = server::compose::render(&text, &app, index, "/run/pocketcloud/env")?;
                 print!("{}", r.yaml);
                 Ok(())
             }

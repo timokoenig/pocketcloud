@@ -88,7 +88,7 @@ pub async fn show(State(state): State<Shared>, user: User, Path(id): Path<i64>, 
     let secrets: Vec<views::SecretView> = db::secrets_of(&state.db, id)
         .await?
         .into_iter()
-        .map(|s| views::SecretView { key: s.key, updated: views::ago(&s.updated) })
+        .map(|s| views::SecretView { services: if s.services.is_empty() { vec![] } else { s.services.split(',').map(str::to_string).collect() }, key: s.key, updated: views::ago(&s.updated) })
         .collect();
     let releases = db::releases_of(&state.db, id, 10)
         .await?
@@ -128,7 +128,35 @@ pub async fn show(State(state): State<Shared>, user: User, Path(id): Path<i64>, 
         missing,
         hardening,
         backup_enabled: state.config.backup.is_some(),
+        snapshots: if state.config.backup.is_some() { crate::server::backup::cached_snapshots(&state).await } else { vec![] },
     })
+}
+
+#[derive(Deserialize)]
+pub struct AppRestoreForm {
+    snapshot: String,
+    confirm: String,
+}
+
+/// Put volumes, files and database dumps of this app back from a snapshot.
+pub async fn restore(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<AppRestoreForm>) -> R {
+    let app = load_app(&state, id).await?;
+    let page = format!("/apps/{id}");
+    if state.config.backup.is_none() {
+        return Ok(back(&page, None, Some("backups are not configured")));
+    }
+    if f.confirm.trim() != app.name {
+        return Ok(back(&page, None, Some("type the app name to confirm")));
+    }
+    db::audit(&state.db, &user.username, "app.restore", &format!("{} {}", app.name, f.snapshot)).await?;
+    let mut redact = deploy::secret_values(&state, app.id).await?;
+    redact.extend(state.config.backup.as_ref().map(|b| b.secret_key.clone()));
+    let snap = f.snapshot.trim().to_string();
+    let app_id = app.id;
+    match jobs::spawn(&state, "restore", Some(app.id), redact, move |s, log| crate::server::backup::restore_app(s, app_id, snap, log)).await {
+        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
+        Err(e) => Ok(back(&page, None, Some(&e.to_string()))),
+    }
 }
 
 #[derive(Deserialize)]
@@ -444,7 +472,11 @@ pub async fn delete_route(State(state): State<Shared>, user: User, Path((id, rid
 #[derive(Deserialize)]
 pub struct SecretForm {
     key: String,
+    #[serde(default)]
     value: String,
+    /// `svc_<name>=on` for each service the secret should reach; none checked means every service
+    #[serde(flatten)]
+    rest: std::collections::HashMap<String, String>,
 }
 
 pub async fn put_secret(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<SecretForm>) -> R {
@@ -454,9 +486,20 @@ pub async fn put_secret(State(state): State<Shared>, user: User, Path(id): Path<
     if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || key.starts_with(|c: char| c.is_ascii_digit()) {
         return Ok(back(&page, None, Some("secret names are environment variable names: letters, digits, underscores")));
     }
+    let services = compose::check(&app.compose).unwrap_or_default();
+    let mut scope: Vec<String> = f.rest.keys().filter_map(|k| k.strip_prefix("svc_")).filter(|s| services.iter().any(|x| x == s)).map(str::to_string).collect();
+    scope.sort();
+    let scope = if scope.len() == services.len() { String::new() } else { scope.join(",") };
     let value = f.value.trim_end_matches(['\r', '\n']);
-    db::put_secret(&state.db, id, &key, &state.key.seal(value.as_bytes())).await?;
-    db::audit(&state.db, &user.username, "secret.put", &format!("{} {key}", app.name)).await?;
+    if value.is_empty() {
+        if !db::set_secret_services(&state.db, id, &key, &scope).await? {
+            return Ok(back(&page, None, Some("a new secret needs a value")));
+        }
+        db::audit(&state.db, &user.username, "secret.scope", &format!("{} {key} {}", app.name, if scope.is_empty() { "all" } else { &scope })).await?;
+        return Ok(back(&page, Some(&format!("secret {key} now reaches {}, deploy to apply", if scope.is_empty() { "every service".to_string() } else { scope.replace(',', ", ") })), None));
+    }
+    db::put_secret(&state.db, id, &key, &state.key.seal(value.as_bytes()), &scope).await?;
+    db::audit(&state.db, &user.username, "secret.put", &format!("{} {key} -> {}", app.name, if scope.is_empty() { "all" } else { &scope })).await?;
     Ok(back(&page, Some(&format!("secret {key} saved, deploy to apply")), None))
 }
 

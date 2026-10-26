@@ -133,6 +133,10 @@ async fn migrate(db: &Db) -> Result<()> {
     if !cols.iter().any(|(_, n)| n == "backup") {
         sqlx::query("ALTER TABLE apps ADD COLUMN backup INTEGER NOT NULL DEFAULT 1").execute(db).await?;
     }
+    let cols: Vec<(i64, String)> = sqlx::query_as("SELECT cid, name FROM pragma_table_info('secrets')").fetch_all(db).await?;
+    if !cols.iter().any(|(_, n)| n == "services") {
+        sqlx::query("ALTER TABLE secrets ADD COLUMN services TEXT NOT NULL DEFAULT ''").execute(db).await?;
+    }
     let cols: Vec<(i64, String)> = sqlx::query_as("SELECT cid, name FROM pragma_table_info('releases')").fetch_all(db).await?;
     if !cols.iter().any(|(_, n)| n == "scan") {
         sqlx::query("ALTER TABLE releases ADD COLUMN scan TEXT NOT NULL DEFAULT ''").execute(db).await?;
@@ -394,24 +398,44 @@ pub struct Secret {
     pub key: String,
     pub sealed: Vec<u8>,
     pub updated: String,
+    /// comma-separated service names that receive this secret; empty means every service
+    pub services: String,
+}
+
+impl Secret {
+    pub fn reaches(&self, service: &str) -> bool {
+        self.services.is_empty() || self.services.split(',').any(|s| s == service)
+    }
 }
 
 pub async fn secrets_of(db: &Db, app_id: i64) -> Result<Vec<Secret>> {
     Ok(sqlx::query_as("SELECT * FROM secrets WHERE app_id = ? ORDER BY key").bind(app_id).fetch_all(db).await?)
 }
 
-pub async fn put_secret(db: &Db, app_id: i64, key: &str, sealed: &[u8]) -> Result<()> {
+pub async fn put_secret(db: &Db, app_id: i64, key: &str, sealed: &[u8], services: &str) -> Result<()> {
     sqlx::query(
-        "INSERT INTO secrets (app_id, key, sealed, updated) VALUES (?, ?, ?, ?)
-         ON CONFLICT (app_id, key) DO UPDATE SET sealed = excluded.sealed, updated = excluded.updated",
+        "INSERT INTO secrets (app_id, key, sealed, updated, services) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (app_id, key) DO UPDATE SET sealed = excluded.sealed, updated = excluded.updated, services = excluded.services",
     )
     .bind(app_id)
     .bind(key)
     .bind(sealed)
     .bind(now())
+    .bind(services)
     .execute(db)
     .await?;
     Ok(())
+}
+
+pub async fn set_secret_services(db: &Db, app_id: i64, key: &str, services: &str) -> Result<bool> {
+    let r = sqlx::query("UPDATE secrets SET services = ? WHERE app_id = ? AND key = ?").bind(services).bind(app_id).bind(key).execute(db).await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// A backed-up database copy, for reading only.
+pub async fn open_read_only(path: &Path) -> Result<Db> {
+    let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?.read_only(true).immutable(true);
+    Ok(SqlitePoolOptions::new().max_connections(1).connect_with(opts).await.context("open backed-up database")?)
 }
 
 pub async fn delete_secret(db: &Db, app_id: i64, key: &str) -> Result<()> {

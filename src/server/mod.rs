@@ -37,21 +37,18 @@ pub async fn run(args: ServerArgs) -> Result<()> {
             print!("{}", crate::firewall::render(&crate::firewall::FirewallSpec { wan: &wan, vpn_port: state.config.vpn.port, bridges: &bridges }));
             Ok(())
         }
+        ServerCommand::Restore { app, snapshot } => {
+            let state = build_state(config).await?;
+            let a = db::app_by_name(&state.db, &app).await?.ok_or_else(|| anyhow::anyhow!("no app {app}"))?;
+            let redact = deploy::secret_values(&state, a.id).await?;
+            let app_id = a.id;
+            let id = jobs::spawn(&state, "restore", Some(a.id), redact, move |s, log| backup::restore_app(s, app_id, snapshot, log)).await?;
+            wait_for_job(&state, id).await
+        }
         ServerCommand::Backup => {
             let state = build_state(config).await?;
             let id = backup::spawn_job(&state).await?;
-            loop {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                let job = db::job(&state.db, id).await?.ok_or_else(|| anyhow::anyhow!("job vanished"))?;
-                if job.status != "running" && job.status != "queued" {
-                    println!("backup job #{id}: {}", job.status);
-                    if job.status != "done" {
-                        std::process::exit(1);
-                    }
-                    break;
-                }
-            }
-            Ok(())
+            wait_for_job(&state, id).await
         }
         ServerCommand::Apply => {
             let state = build_state(config).await?;
@@ -71,6 +68,21 @@ pub async fn run(args: ServerArgs) -> Result<()> {
                 println!("user created");
             }
             Ok(())
+        }
+    }
+}
+
+/// Wait for a job started from the shell; the log lines already print through tracing.
+async fn wait_for_job(state: &Shared, id: i64) -> Result<()> {
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let job = db::job(&state.db, id).await?.ok_or_else(|| anyhow::anyhow!("job vanished"))?;
+        if job.status != "running" && job.status != "queued" {
+            println!("job #{id}: {}", job.status);
+            if job.status != "done" {
+                std::process::exit(1);
+            }
+            return Ok(());
         }
     }
 }
@@ -104,13 +116,15 @@ async fn build_state(config: Config) -> Result<Shared> {
     }
     let docker = if config.dev { None } else { docker::connect().ok() };
     let dns_api = Hetzner::new(config.hetzner.dns_token());
+    // every process that may reconcile needs the public addresses, not only the daemon
+    let public_ips = if config.dev { vec!["127.0.0.1".into()] } else { system::local_public_ips().await.unwrap_or_default() };
     Ok(Arc::new(State {
         db,
         key,
         docker,
         dns_api,
         internal_names: Default::default(),
-        public_ips: RwLock::new(vec![]),
+        public_ips: RwLock::new(public_ips),
         reconcile_lock: Mutex::new(()),
         host: RwLock::new(Default::default()),
         started: chrono::Utc::now(),

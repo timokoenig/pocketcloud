@@ -41,7 +41,9 @@ the compose output live; secret values are redacted from it and from container l
 
 ## Secrets and environment
 
-Secrets are sealed with the master key and never shown again; *Replace* sets a new value. A `${NAME}` placeholder
+Secrets are sealed with the master key and never shown again; saving a name again sets a new value. Each secret
+reaches only the ticked services (all by default): a mail password for the mailer need not be in the website's
+environment. Saving with an empty value changes just the services. A `${NAME}` placeholder
 in the compose file is filled from the secret of that name, and the page warns about placeholders without one.
 The *Environment* table lists the `environment` entries of every service and edits them in place. Those edits
 rewrite the compose file through the YAML model, so comments in it are lost; use *Edit compose* for anything

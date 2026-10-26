@@ -285,6 +285,7 @@ pub async fn server(State(state): State<Shared>, user: User, Query(f): Query<Fla
         waf_events: if state.config.dev { vec![] } else { system::waf_events(50).await },
         jails: if state.config.dev { vec![] } else { system::fail2ban_status().await },
         backup: backup_view(&state).await,
+        snapshots: crate::server::backup::cached_snapshots(&state).await,
         newer_release: host.latest_version.clone(),
         host,
         uptime,
@@ -334,6 +335,40 @@ pub async fn backup_now(State(state): State<Shared>, user: User) -> R {
     }
     db::audit(&state.db, &user.username, "server.backup", "").await?;
     match crate::server::backup::spawn_job(&state).await {
+        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
+        Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
+    }
+}
+
+pub async fn refresh_snapshots(State(state): State<Shared>, user: User) -> R {
+    if state.config.backup.is_none() {
+        return Ok(back("/server", None, Some("backups are not configured")));
+    }
+    db::audit(&state.db, &user.username, "server.snapshots", "").await?;
+    match crate::server::backup::refresh_snapshots(&state).await {
+        Ok(list) => Ok(back("/server", Some(&format!("{} snapshot(s) in the repository", list.len())), None)),
+        Err(e) => Ok(back("/server", None, Some(&format!("{e:#}")))),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RestoreForm {
+    snapshot: String,
+    confirm: String,
+}
+
+/// Import the apps of a snapshot (an earlier installation) and restore their data.
+pub async fn restore_import(State(state): State<Shared>, user: User, Form(f): Form<RestoreForm>) -> R {
+    if state.config.backup.is_none() {
+        return Ok(back("/server", None, Some("backups are not configured")));
+    }
+    if f.confirm.trim() != "restore" {
+        return Ok(back("/server", None, Some("type restore to confirm")));
+    }
+    db::audit(&state.db, &user.username, "server.restore", &f.snapshot).await?;
+    let redact = state.config.backup.as_ref().map(|b| vec![b.secret_key.clone()]).unwrap_or_default();
+    let snap = f.snapshot.trim().to_string();
+    match jobs::spawn(&state, "restore-all", None, redact, move |s, log| crate::server::backup::restore_import(s, snap, log)).await {
         Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
         Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
     }

@@ -23,8 +23,8 @@ pub async fn apply(state: &Shared) -> Result<()> {
         if app.desired != "running" {
             continue;
         }
-        let env = state.config.run_dir().join("env").join(format!("{}.env", app.name));
-        let Ok(r) = compose::render(&app.compose, &app.name, app.net_index as u32, &env.display().to_string()) else {
+        let env_dir = state.config.run_dir().join("env");
+        let Ok(r) = compose::render(&app.compose, &app.name, app.net_index as u32, &env_dir.display().to_string()) else {
             continue;
         };
         for route in routes.iter().filter(|r| r.app_id == app.id) {
@@ -40,6 +40,10 @@ pub async fn apply(state: &Shared) -> Result<()> {
         }
     }
     let ips = state.public_ips.read().await.clone();
+    if ips.is_empty() && !state.config.dev {
+        // a config without public listeners would take every app offline; better to leave Caddy as it is
+        anyhow::bail!("public addresses unknown, caddy configuration not touched");
+    }
     let certs = caddy::cert_files(&state.config.certs_dir(), &state.config.domains);
     let cfg = caddy::render(&caddy::CaddySpec {
         public_ips: &ips,

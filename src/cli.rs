@@ -75,6 +75,8 @@ pub enum ServerCommand {
     Passwd { username: String },
     /// Run a backup now and wait for it (same job the interface starts)
     Backup,
+    /// Restore an app's data from a snapshot ("latest" or an id) and wait for it
+    Restore { app: String, snapshot: String },
 }
 
 #[derive(Args)]

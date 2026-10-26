@@ -159,6 +159,8 @@ pub struct RouteView {
 pub struct SecretView {
     pub key: String,
     pub updated: String,
+    /// empty: every service
+    pub services: Vec<String>,
 }
 
 pub struct ReleaseView {
@@ -209,6 +211,7 @@ pub struct AppShow {
     pub hardening: Vec<(String, String)>,
     /// backups are configured for this installation; the app's own switch is `app.backup`
     pub backup_enabled: bool,
+    pub snapshots: Vec<crate::server::backup::Snapshot>,
 }
 
 pub struct ServiceHint {
@@ -328,6 +331,7 @@ pub struct ServerPage {
     /// newest release on GitHub when it differs from the running version
     pub newer_release: String,
     pub backup: BackupView,
+    pub snapshots: Vec<crate::server::backup::Snapshot>,
 }
 
 pub struct AuditView {

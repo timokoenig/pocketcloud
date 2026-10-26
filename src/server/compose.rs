@@ -213,11 +213,12 @@ pub fn set_environment(compose: &str, service: &str, name: &str, value: Option<&
 }
 
 pub fn check(compose: &str) -> Result<Vec<String>> {
-    let r = render(compose, "check", 1, "/dev/null")?;
+    let r = render(compose, "check", 1, "/run/pocketcloud/env")?;
     Ok(r.services.into_iter().map(|(n, _)| n).collect())
 }
 
-pub fn render(compose: &str, app: &str, net_index: u32, env_file: &str) -> Result<Rendered> {
+/// `env_dir` holds the secrets: `<app>.<service>.env` per service, written by deploy.
+pub fn render(compose: &str, app: &str, net_index: u32, env_dir: &str) -> Result<Rendered> {
     let mut doc: Value = serde_yaml_ng::from_str(compose).context("compose file is not valid YAML")?;
     let root = doc.as_mapping_mut().ok_or_else(|| anyhow!("compose file must be a mapping"))?;
     root.remove(key("name"));
@@ -309,7 +310,7 @@ pub fn render(compose: &str, app: &str, net_index: u32, env_file: &str) -> Resul
                 check_relative_path(p).with_context(|| format!("service `{name}` env_file"))?;
             }
         }
-        envs.push(key(env_file));
+        envs.push(key(&format!("{env_dir}/{app}.{name}.env")));
         svc.insert(key("env_file"), Value::Sequence(envs));
         // static address in the app network
         let ip = firewall::service_ip(net_index, i as u32);

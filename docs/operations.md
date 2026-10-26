@@ -46,7 +46,8 @@ set: the master key.
 
 The server page shows the last run, snapshot count, size and last check, with a *Back up now* button; the
 dashboard warns after a failed run or two days without success. On the server, `sudo pocketcloud server backup`
-runs the same job from a shell and waits for it. Hetzner Object Storage occasionally answers a request with a
+runs the same job from a shell and waits for it; `sudo pocketcloud server restore <app> latest` does the same
+for an app's data restore, for the day the interface is down. Hetzner Object Storage occasionally answers a request with a
 spurious "Access Denied"; restic calls are retried three times for that.
 
 Restore by hand, from any machine with restic:
@@ -58,9 +59,19 @@ restic snapshots
 restic restore latest --target /tmp/restore --include /var/lib/docker/volumes/<volume>
 ```
 
-A restored volume goes back with the app stopped: copy the `_data` directory over the volume's, start the app.
-A database dump is replayed into the running database service. An automated restore (per app, and a whole
-server through setup) is the next step.
+Restore in the interface:
+
+- **One app**: *Restore data from a backup* on the app page, pick a snapshot, type the app name. The app is
+  stopped, its volumes and `files` are replaced by the snapshot's, database dumps are replayed into the database
+  services (started first, alone), then everything starts. Current data is overwritten.
+- **A rebuilt server**: run `pocketcloud setup <newname>` and answer *yes* to reusing the recovery phrase of the
+  old installation, so the new server has the same master key. Enable backups with the same bucket (setup asks,
+  or `pocketcloud backup <name> enable`). On the server page press *Refresh snapshots*, then *Restore apps from a
+  snapshot*: every app of the snapshot that does not exist yet is imported with compose file, routes, secrets and
+  settings, deployed, and its data restored. The job log tells per app what happened. Devices, users and VPN
+  peers are not imported; they belong to the new server.
+
+The snapshot list on the pages is refreshed after each backup and by the button.
 
 Note: the server holds credentials that can delete snapshots, since it prunes them. Keep that in mind when
 choosing the bucket's project.

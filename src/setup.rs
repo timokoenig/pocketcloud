@@ -242,8 +242,20 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
     let device_ip = wireguard::next_ip(wireguard::Scope::Full, &[])?;
 
     step("Recovery phrase");
-    let master = MasterKey::generate();
+    let reuse = Confirm::with_theme(&theme())
+        .with_prompt("Reuse the recovery phrase of an earlier installation? (needed to restore its backups)")
+        .default(false)
+        .interact()?;
+    let master = if reuse {
+        let phrase: String = Input::with_theme(&theme()).with_prompt("24 words").interact_text()?;
+        let m = MasterKey::from_phrase(&phrase)?;
+        ok("master key restored from the phrase; backups of the earlier installation can be read");
+        m
+    } else {
+        MasterKey::generate()
+    };
     let phrase = master.phrase();
+    if !reuse {
     println!("  The master key encrypts every secret on the server. This phrase is the only way to recover it.");
     println!("  Store it in your password manager now. It is shown once and never stored by pocketcloud.\n");
     for (i, chunk) in phrase.split_whitespace().collect::<Vec<_>>().chunks(6).enumerate() {
@@ -265,6 +277,7 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
             }
         }
         ok("phrase confirmed");
+    }
     }
 
     let server_config = render_server_config(&ServerConfigInput {

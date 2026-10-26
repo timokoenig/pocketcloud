@@ -55,6 +55,18 @@
     <dt>Last check</dt><dd>{{ backup.last_check }}</dd>
   </dl>
   <form method="post" action="/server/backup" class="inline"><button>Back up now</button></form>
+  <form method="post" action="/server/snapshots" class="inline"><button>Refresh snapshots</button></form>
+  <details class="danger-zone">
+    <summary>Restore apps from a snapshot</summary>
+    {% if snapshots.is_empty() %}<p class="muted small">No snapshot list yet; press <em>Refresh snapshots</em>.</p>{% else %}
+    <form method="post" action="/server/restore" class="row">
+      <label>Snapshot <select name="snapshot">{% for s in snapshots %}<option value="{{ s.id }}">{{ s.time }} · {{ s.id }}</option>{% endfor %}</select></label>
+      <label>Type <code>restore</code> to confirm <input name="confirm" required autocomplete="off"></label>
+      <button class="danger">Restore</button>
+    </form>
+    <p class="muted small">For a rebuilt server: imports every app of the snapshot that does not exist here (compose file, routes, secrets, settings), deploys it and restores its data. Needs the same master key, so set up the new server with the old recovery phrase. Apps that already exist are left alone; restore their data from their page.</p>
+    {% endif %}
+  </details>
   <p class="muted small">Contents: the pocketcloud database, the server config, and for every app with backups on its volumes, files and a dump of each postgres or mysql service. Never the master key: the recovery phrase is its backup. Restore: <code>pocketcloud backup &lt;name&gt; password</code> gives the restic password.</p>
 </div>
 {% endif %}

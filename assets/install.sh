@@ -14,7 +14,7 @@ if [[ ! -x /usr/local/bin/pocketcloud ]]; then
   apt-get -y -qq -o Dpkg::Options::=--force-confold full-upgrade >/dev/null
   apt-get -y -qq autoremove >/dev/null
 fi
-apt-get install -y -qq ca-certificates curl gnupg nftables fail2ban unattended-upgrades auditd aide aide-common wireguard-tools jq restic debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+apt-get install -y -qq ca-certificates curl gnupg nftables fail2ban unattended-upgrades auditd aide aide-common wireguard-tools jq restic rsync debian-keyring debian-archive-keyring apt-transport-https >/dev/null
 
 if ! command -v docker >/dev/null; then
   log "docker engine"

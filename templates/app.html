@@ -40,6 +40,17 @@
   {% else %}<input type="hidden" name="value" value="on"><button class="toggle" title="this app is excluded from backups; click to include it">backup off</button>{% endif %}
   <span class="muted small">Switch off for apps that run their own backups.</span>
 </form>
+<details class="danger-zone">
+  <summary>Restore data from a backup</summary>
+  {% if snapshots.is_empty() %}<p class="muted small">No snapshot list yet; use <em>Refresh snapshots</em> on the server page.</p>{% else %}
+  <form method="post" action="/apps/{{ app.id }}/restore" class="row">
+    <label>Snapshot <select name="snapshot">{% for s in snapshots %}<option value="{{ s.id }}">{{ s.time }} · {{ s.id }}</option>{% endfor %}</select></label>
+    <label>Type <code>{{ app.name }}</code> to confirm <input name="confirm" required autocomplete="off"></label>
+    <button class="danger">Restore</button>
+  </form>
+  <p class="muted small">Stops the app, replaces its volumes and files with the snapshot's, replays the database dumps, starts it again. Current data is overwritten.</p>
+  {% endif %}
+</details>
 {% endif %}
 
 <h2>Services</h2>
@@ -103,14 +114,15 @@
 <h2>Secrets</h2>
 {% if !missing.is_empty() %}<div class="flash warn">Referenced in the compose file but not set: {% for m in missing %}<code>{{ m }}</code> {% endfor %}</div>{% endif %}
 <table>
-  <thead><tr><th>Name</th><th>Updated</th><th>Value</th><th></th></tr></thead>
+  <thead><tr><th>Name</th><th>Updated</th><th>Reaches</th><th>Value</th><th></th></tr></thead>
   <tbody>
   {% for s in secrets %}
   <tr>
     <td><code>{{ s.key }}</code></td><td class="muted small">{{ s.updated }}</td>
     <form method="post" action="/apps/{{ app.id }}/secrets" autocomplete="off" id="secret-{{ s.key }}">
-    <td><input type="hidden" name="key" value="{{ s.key }}"><textarea name="value" class="secret" rows="1" placeholder="new value" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></td>
-    <td><button>Replace</button> <button class="link danger" form="secret-delete-{{ s.key }}">remove</button></td>
+    <td class="small">{% for svc in services %}<label class="check"><input type="checkbox" name="svc_{{ svc }}" value="on"{% if s.services.is_empty() || s.services.contains(svc) %} checked{% endif %}> {{ svc }}</label> {% endfor %}</td>
+    <td><input type="hidden" name="key" value="{{ s.key }}"><textarea name="value" class="secret" rows="1" placeholder="new value (optional)" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></td>
+    <td><button>Save</button> <button class="link danger" form="secret-delete-{{ s.key }}">remove</button></td>
     </form>
     <form method="post" action="/apps/{{ app.id }}/secrets/delete" id="secret-delete-{{ s.key }}" data-confirm="Remove secret {{ s.key }}?"><input type="hidden" name="key" value="{{ s.key }}"></form>
   </tr>
@@ -119,13 +131,14 @@
     <form method="post" action="/apps/{{ app.id }}/secrets" autocomplete="off">
     <td><input name="key" placeholder="DATABASE_URL" pattern="[A-Za-z_][A-Za-z0-9_]*" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore{% if let Some(m) = missing.first() %} value="{{ m }}"{% endif %}></td>
     <td></td>
+    <td class="small">{% for svc in services %}<label class="check"><input type="checkbox" name="svc_{{ svc }}" value="on" checked> {{ svc }}</label> {% endfor %}</td>
     <td><textarea name="value" class="secret" rows="1" placeholder="value" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></td>
     <td><button>Save</button></td>
     </form>
   </tr>
   </tbody>
 </table>
-<p class="muted small">Secrets reach every container of the app as environment variables and fill <code>${NAME}</code> in the compose file. Values are visible while you type and never shown again; Replace sets a new one.</p>
+<p class="muted small">A secret reaches the ticked services as an environment variable; <code>${NAME}</code> in the compose file is filled wherever you put it. Values are visible while you type and never shown again; Save with an empty value only changes the services.</p>
 
 <h2>Environment</h2>
 {% if env.is_empty() %}<p class="muted">the compose file sets no environment variables</p>{% else %}

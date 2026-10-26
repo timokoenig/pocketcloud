@@ -247,9 +247,8 @@ async fn run_inner(state: &State, log: &Log) -> Result<()> {
 
     // every nightly snapshot is kept for 30 days, nothing older survives
     restic(state, &["forget", "--keep-within", "30d", "--prune", "--quiet"], Some(log)).await?;
-    if let Ok(list) = restic(state, &["snapshots", "--json"], None).await {
-        let n = serde_json::from_str::<serde_json::Value>(&list).ok().and_then(|v| v.as_array().map(|a| a.len())).unwrap_or(0);
-        db::kv_set(&state.db, "backup.snapshots", &n.to_string()).await?;
+    if let Err(e) = refresh_snapshots(state).await {
+        log.line(format!("snapshot list not refreshed: {e:#}")).await;
     }
 
     // weekly integrity check
@@ -300,4 +299,238 @@ async fn dump(container: &str, cmd: &str, file: &std::path::Path) -> Result<u64>
     std::fs::write(file, &out.stdout)?;
     crate::install::set_mode(file, 0o600)?;
     Ok(out.stdout.len() as u64)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Restore
+// ---------------------------------------------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct Snapshot {
+    pub id: String,
+    pub time: String,
+}
+
+/// Snapshots in the repository, newest first; also cached for the pages.
+pub async fn refresh_snapshots(state: &State) -> Result<Vec<Snapshot>> {
+    let out = restic(state, &["snapshots", "--json", "--tag", "pocketcloud"], None).await?;
+    let v: serde_json::Value = serde_json::from_str(&out).context("snapshot list")?;
+    let mut list: Vec<Snapshot> = v
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|s| Snapshot {
+            id: s.get("short_id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            time: s.get("time").and_then(|x| x.as_str()).unwrap_or("").chars().take(16).collect::<String>().replace('T', " "),
+        })
+        .collect();
+    list.reverse();
+    db::kv_set(&state.db, "backup.snapshot_list", &serde_json::to_string(&list)?).await?;
+    db::kv_set(&state.db, "backup.snapshots", &list.len().to_string()).await?;
+    Ok(list)
+}
+
+pub async fn cached_snapshots(state: &State) -> Vec<Snapshot> {
+    db::kv_get(&state.db, "backup.snapshot_list").await.ok().flatten().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+fn valid_snapshot(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_hexdigit()) || id == "latest"
+}
+
+async fn rsync(from: &std::path::Path, to: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(to)?;
+    let out = Command::new("rsync")
+        .arg("-a")
+        .arg("--delete")
+        .arg(format!("{}/", from.display()))
+        .arg(format!("{}/", to.display()))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .context("rsync")?;
+    if !out.status.success() {
+        bail!("rsync: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or(""));
+    }
+    Ok(())
+}
+
+/// Replay command for a dump, inside the database container, reading the dump from stdin.
+fn replay_command(image: &str) -> Option<&'static str> {
+    let img = image.rsplit('/').next().unwrap_or(image).to_ascii_lowercase();
+    if img.starts_with("postgres") || img.starts_with("timescale") || img.starts_with("pgvector") {
+        Some(r#"psql -q -U "${POSTGRES_USER:-postgres}" -d postgres -f -"#)
+    } else if img.starts_with("mysql") || img.starts_with("mariadb") {
+        Some(r#"if command -v mariadb >/dev/null; then c=mariadb; else c=mysql; fi; $c -uroot -p"${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}""#)
+    } else {
+        None
+    }
+}
+
+/// Put an app's volumes, files and database dumps back from a snapshot. The app is stopped meanwhile.
+pub async fn restore_app(state: Shared, app_id: i64, snapshot: String, log: Log) -> Result<()> {
+    if !valid_snapshot(&snapshot) {
+        bail!("not a snapshot id");
+    }
+    let app = db::app(&state.db, app_id).await?.ok_or_else(|| anyhow!("app not found"))?;
+    let p = super::deploy::prepare(&state, &app, None).await?;
+    let tmp = state.config.data_dir.join("restore").join(&app.name);
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp)?;
+    crate::install::set_mode(&tmp, 0o700)?;
+
+    let vol_glob = format!("/var/lib/docker/volumes/{}_*", app.name);
+    let files_path = format!("/var/lib/pocketcloud/apps/{}/files", app.name);
+    let dumps_path = format!("/var/lib/pocketcloud/backup-stage/apps/{}", app.name);
+    log.line(format!("restoring {} from snapshot {snapshot}", app.name)).await;
+    let target = tmp.display().to_string();
+    restic(&state, &["restore", &snapshot, "--target", &target, "--include", &vol_glob, "--include", &files_path, "--include", &dumps_path], Some(&log)).await?;
+
+    db::set_app_status(&state.db, app.id, "deploying", "restoring from backup").await?;
+    docker::compose(&state, &app.name, &p.app_dir, &p.env_file, &["down", "--remove-orphans"], &log).await.context("stop")?;
+    // containers and volumes exist afterwards, nothing runs yet
+    docker::compose(&state, &app.name, &p.app_dir, &p.env_file, &["create"], &log).await.context("create")?;
+
+    let mut restored = 0;
+    let vols = tmp.join("var/lib/docker/volumes");
+    if let Ok(entries) = std::fs::read_dir(&vols) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let dest = std::path::Path::new("/var/lib/docker/volumes").join(&name).join("_data");
+            if !dest.is_dir() {
+                log.line(format!("volume {name} is not part of the app any more, skipped")).await;
+                continue;
+            }
+            log.line(format!("volume {name}")).await;
+            rsync(&e.path().join("_data"), &dest).await?;
+            restored += 1;
+        }
+    }
+    let files_src = tmp.join(files_path.trim_start_matches('/'));
+    if files_src.is_dir() {
+        log.line("files directory").await;
+        rsync(&files_src, &state.config.apps_dir().join(&app.name).join("files")).await?;
+        restored += 1;
+    }
+
+    // database dumps: start only the database services, replay, then everything
+    let dumps_dir = tmp.join(dumps_path.trim_start_matches('/'));
+    let mut dumps: Vec<(String, PathBuf)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dumps_dir) {
+        for e in entries.flatten() {
+            if let Some(service) = e.file_name().to_string_lossy().strip_suffix(".sql") {
+                dumps.push((service.to_string(), e.path()));
+            }
+        }
+    }
+    if !dumps.is_empty() {
+        let services: Vec<&str> = dumps.iter().map(|(s, _)| s.as_str()).collect();
+        let mut args = vec!["up", "-d", "--wait", "--wait-timeout", "180"];
+        args.extend(services.iter().copied());
+        docker::compose(&state, &app.name, &p.app_dir, &p.env_file, &args, &log).await.context("start database services")?;
+        let docker_api = state.docker.as_ref().ok_or_else(|| anyhow!("docker not available"))?;
+        let containers = docker::containers_of(docker_api, &app.name).await?;
+        for (service, file) in &dumps {
+            let Some(c) = containers.iter().find(|c| &c.service == service) else {
+                log.line(format!("no container for {service}, dump not replayed")).await;
+                continue;
+            };
+            let Some(cmd) = replay_command(&c.image) else {
+                log.line(format!("{service}: unknown database image, dump not replayed")).await;
+                continue;
+            };
+            log.line(format!("replaying dump into {service}")).await;
+            let input = std::fs::File::open(file)?;
+            let out = Command::new("docker").args(["exec", "-i", &c.id, "sh", "-c", cmd]).stdin(input).output().await?;
+            if !out.status.success() {
+                bail!("replay into {service} failed: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or(""));
+            }
+            let errs = String::from_utf8_lossy(&out.stderr).lines().filter(|l| l.contains("ERROR")).count();
+            log.line(format!("  done{}", if errs > 0 { format!(" ({errs} statements reported errors, usually roles or databases that already exist)") } else { String::new() })).await;
+            restored += 1;
+        }
+    }
+
+    docker::compose(&state, &app.name, &p.app_dir, &p.env_file, &["up", "-d", "--wait", "--wait-timeout", "180"], &log).await.context("start")?;
+    db::set_app_desired(&state.db, app.id, "running").await?;
+    db::set_app_status(&state.db, app.id, "running", "").await?;
+    super::reconcile::apply(&state).await?;
+    let _ = std::fs::remove_dir_all(&tmp);
+    log.line(format!("restore complete: {restored} item(s) restored")).await;
+    Ok(())
+}
+
+/// Bring apps of an earlier installation back from a snapshot: definitions (compose, routes, secrets, settings)
+/// from the backed-up database, then deploy and data restore per app. Apps that exist here already are skipped.
+pub async fn restore_import(state: Shared, snapshot: String, log: Log) -> Result<()> {
+    if !valid_snapshot(&snapshot) {
+        bail!("not a snapshot id");
+    }
+    let tmp = state.config.data_dir.join("restore").join("db");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp)?;
+    crate::install::set_mode(&tmp, 0o700)?;
+    let target = tmp.display().to_string();
+    restic(&state, &["restore", &snapshot, "--target", &target, "--include", "/var/lib/pocketcloud/backup-stage/pocketcloud.db"], Some(&log)).await?;
+    let db_path = tmp.join("var/lib/pocketcloud/backup-stage/pocketcloud.db");
+    if !db_path.exists() {
+        bail!("the snapshot has no pocketcloud database");
+    }
+    let old = db::open_read_only(&db_path).await?;
+
+    #[derive(sqlx::FromRow)]
+    struct OldApp {
+        id: i64,
+        name: String,
+        compose: String,
+        egress: String,
+        backup: i64,
+    }
+    let apps: Vec<OldApp> = sqlx::query_as("SELECT id, name, compose, COALESCE(egress, 'all') AS egress, COALESCE(backup, 1) AS backup FROM apps").fetch_all(&old).await?;
+    let mut imported: Vec<i64> = Vec::new();
+    for a in &apps {
+        if db::app_by_name(&state.db, &a.name).await?.is_some() {
+            log.line(format!("{}: exists here already, not imported (restore its data from the app page)", a.name)).await;
+            continue;
+        }
+        let app = db::create_app(&state.db, &a.name, &a.compose).await?;
+        db::set_app_egress(&state.db, app.id, &a.egress).await?;
+        db::set_app_backup(&state.db, app.id, a.backup != 0).await?;
+        let secrets: Vec<(String, Vec<u8>, String)> = match sqlx::query_as("SELECT key, sealed, services FROM secrets WHERE app_id = ?").bind(a.id).fetch_all(&old).await {
+            Ok(v) => v,
+            Err(_) => sqlx::query_as::<_, (String, Vec<u8>)>("SELECT key, sealed FROM secrets WHERE app_id = ?").bind(a.id).fetch_all(&old).await?.into_iter().map(|(k, s)| (k, s, String::new())).collect(),
+        };
+        for (key, sealed, services) in &secrets {
+            if state.key.open(sealed).is_err() {
+                bail!("secret {key} of {} cannot be opened: this server has a different master key than the backup", a.name);
+            }
+            db::put_secret(&state.db, app.id, key, sealed, services).await?;
+        }
+        let routes: Vec<(String, String, i64, String, i64, i64)> =
+            sqlx::query_as("SELECT host, service, port, expose, COALESCE(waf, 1), COALESCE(headers, 1) FROM routes WHERE app_id = ?").bind(a.id).fetch_all(&old).await?;
+        for (host, service, port, expose, waf, headers) in &routes {
+            if let Err(e) = db::add_route(&state.db, app.id, host, service, *port, expose, *waf != 0, *headers != 0).await {
+                log.line(format!("route {host} not added: {e}")).await;
+            }
+        }
+        log.line(format!("{}: imported with {} secret(s) and {} route(s)", a.name, secrets.len(), routes.len())).await;
+        imported.push(app.id);
+    }
+    old.close().await;
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    for id in imported {
+        let name = db::app(&state.db, id).await?.map(|a| a.name).unwrap_or_default();
+        log.line(format!("--- deploying {name}")).await;
+        if let Err(e) = super::deploy::deploy(state.clone(), id, log.clone(), true).await {
+            log.line(format!("{name}: deploy failed ({e:#}); data not restored, fix the app and restore from its page")).await;
+            continue;
+        }
+        log.line(format!("--- restoring data of {name}")).await;
+        if let Err(e) = Box::pin(restore_app(state.clone(), id, snapshot.clone(), log.clone())).await {
+            log.line(format!("{name}: data restore failed: {e:#}")).await;
+        }
+    }
+    log.line("import complete").await;
+    Ok(())
 }

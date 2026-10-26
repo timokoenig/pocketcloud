@@ -36,15 +36,29 @@ pub async fn prepare(state: &State, app: &db::App, compose_text: Option<&str>) -
     let env_dir = state.config.run_dir().join("env");
     std::fs::create_dir_all(&env_dir)?;
     crate::install::set_mode(&env_dir, 0o700)?;
+    // <app>.env holds every secret and only serves `${VAR}` interpolation of the compose file;
+    // each container gets <app>.<service>.env with the secrets scoped to it
     let env_file = env_dir.join(format!("{}.env", app.name));
-    let mut env = String::new();
-    for s in db::secrets_of(&state.db, app.id).await? {
+    let secrets = db::secrets_of(&state.db, app.id).await?;
+    let mut all = String::new();
+    let mut opened: Vec<(String, String, &db::Secret)> = Vec::new();
+    for s in &secrets {
         let v = state.key.open_string(&s.sealed)?;
-        env += &env_line(&s.key, &v);
+        all += &env_line(&s.key, &v);
+        opened.push((s.key.clone(), v.to_string(), s));
     }
-    crate::install::write_private(&env_file, &env)?;
+    crate::install::write_private(&env_file, &all)?;
     let text = compose_text.unwrap_or(&app.compose);
-    let rendered = compose::render(text, &app.name, app.net_index as u32, &env_file.display().to_string())?;
+    let rendered = compose::render(text, &app.name, app.net_index as u32, &env_dir.display().to_string())?;
+    for (service, _) in &rendered.services {
+        let mut env = String::new();
+        for (k, v, s) in &opened {
+            if s.reaches(service) {
+                env += &env_line(k, v);
+            }
+        }
+        crate::install::write_private(&env_dir.join(format!("{}.{service}.env", app.name)), &env)?;
+    }
     let routes = db::routes_of(&state.db, app.id).await?;
     for r in &routes {
         if !rendered.services.iter().any(|(s, _)| s == &r.service) {
@@ -207,8 +221,8 @@ pub async fn scan_images(state: &State, images: &[String], log: &Log) -> String 
 /// Scan the images of the current compose file and attach the result to the latest deployment.
 pub async fn scan(state: Shared, app_id: i64, log: Log) -> Result<()> {
     let app = db::app(&state.db, app_id).await?.ok_or_else(|| anyhow!("app not found"))?;
-    let env = state.config.run_dir().join("env").join(format!("{}.env", app.name));
-    let rendered = compose::render(&app.compose, &app.name, app.net_index as u32, &env.display().to_string())?;
+    let env_dir = state.config.run_dir().join("env");
+    let rendered = compose::render(&app.compose, &app.name, app.net_index as u32, &env_dir.display().to_string())?;
     let scan = scan_images(&state, &rendered.images, &log).await;
     if let Some(last) = db::last_good_release(&state.db, app.id).await? {
         db::set_release_scan(&state.db, last.id, &scan).await?;
