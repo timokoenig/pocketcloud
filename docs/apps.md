@@ -37,11 +37,11 @@ and image digests are stored) is started again and the app shows `rolled_back` w
 the compose output live; secret values are redacted from it and from container logs.
 
 *Start* brings an app up again without pulling. *Stop* removes the containers and the network, volumes stay.
-*Remove* at the bottom of the app page asks for the name and whether to delete volumes.
+*Remove* at the bottom of the app's *Configuration* tab asks for the name and whether to delete volumes.
 
 ## Secrets and environment
 
-Secrets are sealed with the master key and never shown again; saving a name again sets a new value. Each secret
+Secrets live on the app's *Configuration* tab, sealed with the master key and never shown again; saving a name again sets a new value. Each secret
 reaches only the ticked services (all by default): a mail password for the mailer need not be in the website's
 environment. Saving with an empty value changes just the services. A `${NAME}` placeholder
 in the compose file is filled from the secret of that name, and the page warns about placeholders without one.
@@ -52,18 +52,18 @@ beyond values.
 ## Internet access
 
 Each app's containers can reach the internet fully (default), not at all, or only on listed TCP ports (for
-example 587 for mail). The switch is on the app page and takes effect at once. DNS keeps working either way,
+example 587 for mail). The switch is under *Internet access* on the app's *Configuration* tab and takes effect at once. DNS keeps working either way,
 because Docker's resolver answers from the host. Other apps are never reachable, whatever the setting.
 
 ## Hardening hints
 
-The app page lists what a service could do better: a pinned image tag, `user`, `read_only`, `cap_drop: [ALL]`,
+The *Hardening hints* panel on the app's *Overview* tab lists what a service could do better: a pinned image tag, `user`, `read_only`, `cap_drop: [ALL]`,
 a healthcheck. They are hints, not rules.
 
 ## Vulnerability scans and pinned images
 
 Every deploy that pulls images scans them with Trivy (high and critical, from the local daemon) and records the
-result with the deployment: counts on the app page, the critical findings in the job log. Scans never block a
+result with the deployment: counts on the app's *History* tab, the critical findings in the job log. Scans never block a
 deploy. *Scan* runs it again for the current images. *Apply* and a restart after a reboot recreate the containers
 with the images pinned to the digests of the last deployment, so a tag that was moved in the registry cannot
 slip in; only *Deploy* resolves tags again.
@@ -84,9 +84,10 @@ the VPN. Caddy terminates TLS and forwards plain HTTP with `X-Forwarded-Proto: h
 ## Databases
 
 Run them inside the app's compose file with a named volume, as in the example on the *New app* page. There is no
-managed database and no backup in this version; keep that in mind before putting anything irreplaceable there.
+managed database. With backups enabled, the nightly backup includes the app's volumes and a dump of every running
+postgres, mysql or mariadb service (see operations.md, Backups).
 
 ## Private registries
 
-*Registries*: host, username and token, stored encrypted. Every pull of every app uses them. For GitHub Container
+*Settings → Registries*: host, username and token, stored encrypted. Every pull of every app uses them. For GitHub Container
 Registry use a classic personal access token with `read:packages`.

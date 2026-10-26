@@ -6,8 +6,9 @@ manage compose apps from a web interface that is reachable through WireGuard onl
 - **Server**: Ubuntu 24.04, key-only SSH, nftables default drop, fail2ban, auditd, AIDE, unattended security
   updates. Docker with its firewall handling turned off; Pocketcloud owns nftables. Caddy on the host as the only
   listener.
-- **Network**: public DNS holds only `domain` and `*.domain`. One wildcard certificate per domain via DNS-01 in
-  Hetzner DNS, obtained by the daemon. Public routes on the public address, internal routes and the interface on the
+- **Network**: public DNS holds `domain`, `*.domain`, a CAA record and the delegation of `_acme-challenge` to the
+  server. One wildcard certificate per domain via DNS-01, answered by the daemon's own nameserver; no DNS token
+  on the server. Public routes on the public address, internal routes and the interface on the
   WireGuard address `10.8.0.1`; VPN clients resolve internal names through the server.
 - **Apps**: a compose file with prebuilt images. Published ports are stripped, every app gets its own bridge
   `pc-<app>` in `172.30.<n>.0/24` with static addresses, secrets arrive as an env file and as `${NAME}` in the file.
@@ -15,10 +16,12 @@ manage compose apps from a web interface that is reachable through WireGuard onl
 - Public routes sit behind a web application firewall (Coraza, OWASP Core Rule Set), switchable per route.
 - Built-in monitoring: journal, auditd, Falco and Docker events plus host metrics, fixed checks, alerts by mail or
   webhook, a heartbeat for a dead man's switch. Nightly restic backups to S3 with restore.
+- **Interface**: Apps, Server (overview, backups, security), Alerts (alerts, events, audit log) and Settings
+  (notifications, VPN devices, ssh keys, registries, account); everything after setup is managed there.
 - **Recovery**: lost every device? Hetzner's rescue system and `pocketcloud recover` with the 24 words give you a
   new device and, if needed, a new password. Lost the server? Setup again with the same phrase, then restore.
 
-Scope and decisions: [V1.md](V1.md). Guides: [docs/setup.md](docs/setup.md), [docs/apps.md](docs/apps.md),
+Guides: [docs/setup.md](docs/setup.md), [docs/apps.md](docs/apps.md),
 [docs/operations.md](docs/operations.md), [docs/troubleshooting.md](docs/troubleshooting.md), [docs/security.md](docs/security.md).
 
 ## Quick start

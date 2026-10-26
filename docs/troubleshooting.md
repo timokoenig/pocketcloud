@@ -30,7 +30,7 @@ The handshake does not complete, so the server side is not accepting the peer.
   `sudo journalctl -u pocketcloud -n 50`. If the log shows the daemon retrying something at startup, it never got
   as far as writing `/etc/wireguard/wg0.conf`; fix the cause (usually a config value or an API change) and
   `sudo systemctl restart pocketcloud`.
-- The cloud firewall must allow the WireGuard UDP port; `status` prints the rule count, four rules without SSH.
+- The cloud firewall in the Hetzner console must allow the WireGuard UDP port.
 - Your device's config must carry the server's public address as endpoint.
 
 ## While the tunnel is up, nothing on the Mac resolves
@@ -47,8 +47,8 @@ the tunnel while you fix the server, or use the Hetzner console.
 - Issuer contains `(STAGING)`: setup was answered with the staging environment. Change `environment = "staging"` to
   `"production"` in `/etc/pocketcloud/config.toml`, remove `/var/lib/pocketcloud/acme/account.json` and
   `/var/lib/pocketcloud/certs/<domain>/fullchain.pem`, then `sudo systemctl restart pocketcloud`.
-- `acme: ... challenge record did not appear`: the DNS token has no access to the zone, or the zone is in another
-  project than the one whose token was given. `dns_token` in the config must belong to the project holding the zone.
+- `acme: ... challenge nameserver did not answer` or the order times out: the `_acme-challenge` delegation is
+  missing or port 53 is closed, see "Certificates are not renewed" below.
 
 ## Setup stopped half way
 
@@ -76,7 +76,8 @@ versions before 2026-10-25 ran apt inside that sandbox, so dpkg failed as soon a
 left the package database half done. Newer versions start apt as a transient unit outside the sandbox.
 
 1. Install the current build: *Upgrade* on the server page.
-2. Run *Server → Upgrade* again. It finishes the interrupted dpkg step first, then installs the rest.
+2. Press *Install updates* on the Server page again. It finishes the interrupted dpkg step first, then installs
+   the rest.
 
 To repair by hand instead: ssh in with a key added under Settings → SSH keys, then `sudo dpkg --configure -a` and
 `sudo apt-get -f install`.
@@ -92,7 +93,7 @@ fix the records in the Hetzner console (setup writes them; a rebuild rewrites th
 ## A request to an app gets a 403 it should not
 
 The WAF blocked it. Server → Security lists blocked requests with client, request and transaction id; the matching
-rule is in Caddy's log (`journalctl -u caddy -g <id>`). Switch the WAF off for that route on the app page if the app legitimately sends what the
+rule is in Caddy's log (`journalctl -u caddy -g <id>`). Switch the WAF off for that route on the app's *Overview* tab if the app legitimately sends what the
 rule flags (raw SQL in a form, large JSON bodies over 13 MB, unusual headers).
 
 ## The Security tab says the WAF is unavailable
@@ -103,16 +104,16 @@ upload field on the server page, or `scripts/push-dev.sh <target> caddy`.
 
 ## An app cannot reach the internet
 
-Check *Internet access* on the app page. With `none` or a port list, anything else is dropped by the firewall;
+Check *Internet access* on the app's *Configuration* tab. With `none` or a port list, anything else is dropped by the firewall;
 mail needs 587 or 465, webhooks 443. DNS is not affected.
 
 ## A deploy fails or rolls back
 
 The job page shows the compose output. Usual causes: the image cannot be pulled (add the registry under
-*Registries*, check the image name), a service never becomes healthy within three minutes (the healthcheck is
+*Settings → Registries*, check the image name), a service never becomes healthy within three minutes (the healthcheck is
 wrong, or the app rejects its configuration, often a secret in the wrong format), or a route points at a service
 that is not in the file. When a service is unhealthy the job log ends with the container states and their last
-log lines; the same logs are on the app page per service. The containers of a failed first deploy keep running
+log lines; the same logs are on the app's *Overview* tab per service. The containers of a failed first deploy keep running
 and restarting until the next deploy or a stop.
 
 ## ssh over the VPN says "Connection refused"

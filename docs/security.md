@@ -53,8 +53,8 @@ mails them. See operations.md, Monitoring and alerts.
 ## Backups
 
 Off unless enabled. restic encrypts everything client-side with a password derived from the master key; the
-bucket operator sees only ciphertext. The master key is never part of a backup. The S3 credentials sit in the
-server config (root only) and can delete snapshots; a bucket in a project of its own limits the blast radius.
+bucket operator sees only ciphertext. The master key is never part of a backup. The S3 credentials are stored
+sealed in the database and can delete snapshots; a bucket in a project of its own limits the blast radius.
 
 ## Secrets
 
@@ -65,12 +65,13 @@ server config (root only) and can delete snapshots; a bucket in a project of its
   containers only. Other apps never see them. Compose interpolation reads the same file.
 - Job logs and container logs are redacted for known secret values before display.
 - The interface never returns a secret value after it was saved.
-- Hetzner tokens and the WireGuard hub key live in `/etc/pocketcloud/config.toml`, root only. A root compromise of
-  the host exposes everything the host needs to run; encryption at rest is not a defense against that.
+- The WireGuard hub key lives in `/etc/pocketcloud/config.toml`, root only; the master key in
+  `/etc/pocketcloud/master.key`. A root compromise of the host exposes everything the host needs to run;
+  encryption at rest is not a defense against that.
 - After setup nothing of the server is on your computer; the roots of trust are the recovery phrase, your
   VPN devices with the interface password, and the Hetzner account login (rescue mode). Put two-factor
-  authentication on the Hetzner account. (The former local directory
-  WireGuard key in plain files with mode 0600. Protect your machine accordingly; FileVault is assumed.
+  authentication on the Hetzner account. A device's WireGuard config holds its private key; protect the device
+  accordingly, FileVault is assumed.
 
 ## Workloads
 
@@ -96,6 +97,6 @@ WireGuard) under systemd confinement: no new privileges, protected home, kernel 
 
 ## Known gaps in v1
 
-No two-factor login beyond the VPN (failed logins are rate-limited per address and alerted). No signature verification of the binary the installer uploads
-(you build it, or it comes from the GitHub release you chose). Caddy runs as root to bind the WireGuard address
+No two-factor login beyond the VPN (failed logins are rate-limited per address and alerted). Release binaries are verified against the
+published sha256 sums, not signatures (or you build and upload them yourself). Caddy runs as root to bind the WireGuard address
 and read the certificate files. The daemon does not rotate the master key yet.

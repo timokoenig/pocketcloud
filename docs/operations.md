@@ -2,7 +2,7 @@
 
 ## VPN
 
-Devices are managed under *VPN*. Creating one shows the WireGuard config and a QR code exactly once; the private
+Devices are managed under *Settings → VPN devices*. Creating one shows the WireGuard config and a QR code exactly once; the private
 key is generated on the server and not stored. Revoking a device closes its tunnel immediately. The last device
 cannot be removed from the interface.
 
@@ -22,19 +22,22 @@ can log in, which is the state right after setup.
 
 ## Monitoring and alerts
 
+Open and resolved alerts, with the host metrics of the last day, are on the *Alerts* page; what to send and
+where is under *Settings → Notifications*.
+
 The daemon watches the server itself; nothing else runs for it. Collectors: facts from the journal (ssh logins
 and failures, fail2ban bans, sudo, OOM kills, kernel errors, failed units, Caddy's WAF blocks and 5xx answers),
 auditd's syscall records with our keys, Falco's events, Docker events (containers dying, out of memory,
 unhealthy), and a one-minute sample of cpu, memory, swap, disk, inodes, pressure and clock sync. Events are
-kept 14 days, metrics 48 hours; both are on the *Events* and *Alerts* pages.
+kept 14 days, metrics 48 hours; both are on the *Alerts* page (events on its *Events* tab).
 
 Fixed checks run every minute and open alerts with a hold time so a blip is not a page: capacity thresholds,
 services and the Docker API, reboot pending, backups, certificates, failed deploys, AIDE findings, ssh brute
 force, ban waves, OOM kills, kernel errors, failed units, sensitive file changes, Falco by priority, WAF spikes,
-5xx bursts, containers dying, restart loops. Thresholds are editable on the *Alerts* page. Info-level alerts
+5xx bursts, containers dying, restart loops. Thresholds are editable under *Settings → Notifications*. Info-level alerts
 (a newer release, a reboot happened) show but do not notify.
 
-Notifications are configured on the *Alerts* page (e-mail over SMTP, a webhook, the heartbeat URL), stored
+Notifications are configured under *Settings → Notifications* (e-mail over SMTP, a webhook, the heartbeat URL), stored
 sealed with the master key. A `[notify]` section in the config file seeds them on first start, nothing more. Opened and resolved alerts are collected for a minute and sent as one message with the worst thing in
 the subject. `heartbeat_url` is pinged every five minutes while the daemon runs, for a dead man's switch service
 (healthchecks.io style) that tells you when the server itself is gone, the one thing it cannot report.
@@ -46,7 +49,7 @@ containers started outside pocketcloud alert; the configuration is re-applied ev
 doing so alerts. The monitoring watches itself too: a silent journal collector, auditd not enabled, an AIDE
 check that failed or has not run for 36 hours, and failing deliveries all open alerts.
 
-What gets sent: criticals always; warnings by default (*Alerts* can restrict mail to criticals); infos never,
+What gets sent: criticals always; warnings by default (*Settings → Notifications* can restrict mail to criticals); infos never,
 with two exceptions you can switch: security-relevant interface actions (a new or revoked VPN device, registry
 credentials, a WAF switched off, an app removed, a restore; on by default) and ssh logins (off by default).
 Internet background noise (WAF blocks, bans, ssh brute force) is info and stays in the interface; fail2ban deals
@@ -60,10 +63,10 @@ seen nothing for 30 minutes, or deliveries fail, so it means "monitoring works",
 webhook configured, security events are also streamed to it once a minute as they are stored, which leaves an
 off-box copy an intruder cannot clean.
 
-AIDE findings after package updates (unattended-upgrades, Server → Upgrade) refresh the baseline automatically
+AIDE findings after package updates (unattended-upgrades, *Install updates* on the Server page) refresh the baseline automatically
 and only inform; findings without a package change in between stay a warning until you re-baseline. Pending
 packages from third-party repositories (Docker, Caddy, Falco, Trivy) are not installed by unattended-upgrades and
-open a warning until Server → Upgrade.
+open a warning until *Install updates* on the Server page.
 
 Falco is the Falco package with the eBPF probe, writing JSON events to `/var/log/infra/falco.jsonl`; the
 switch under Server → Security starts or stops its service within a minute. It costs about 150 MB.
@@ -72,7 +75,7 @@ switch under Server → Security starts or stops its service within a minute. It
 
 *Upgrade* on the Server page downloads the release (newest, or a version you type), verifies the published
 checksums, runs the installer again and restarts the daemon; `sudo pocketcloud server upgrade` does the same from
-a shell, `--from-dir` with binaries you put there. The installer The installer is idempotent and owns all server configuration: host hardening (sshd, sysctl,
+a shell, `--from-dir` with binaries you put there. The installer is idempotent and owns all server configuration: host hardening (sshd, sysctl,
 fail2ban, unattended-upgrades, journald), Docker's daemon.json, Caddy's unit and binary, auditd rules, the AIDE
 configuration, logrotate and the systemd units. Files are replaced when they differ; sshd changes are validated
 with `sshd -t` and rolled back if invalid. The daemon then migrates the database schema and regenerates nftables,
@@ -110,7 +113,8 @@ restic restore latest --target /tmp/restore --include /var/lib/docker/volumes/<v
 
 Restore in the interface:
 
-- **One app**: *Restore data from a backup* on the app page, pick a snapshot, type the app name. The app is
+- **One app**: *Restore from a snapshot* under *Backup* on the app's *Configuration* tab, pick a snapshot, type
+  the app name. The app is
   stopped, its volumes and `files` are replaced by the snapshot's, database dumps are replayed into the database
   services (started first, alone), then everything starts. Current data is overwritten.
 - **A rebuilt server**: run `pocketcloud setup <newname>` and answer *yes* to reusing the recovery phrase of the
@@ -144,7 +148,7 @@ renewals and holds no DNS token. A rebuilt server gets its records from the setu
 - OS security updates install themselves daily (unattended-upgrades). Reboots never happen on their own; the
   dashboard and the server page say when one is needed and the server page has the button. Apps come back on their
   own after a reboot.
-- *Server → Check* lists all pending packages, *Upgrade* installs them. The upgrade runs as a transient
+- *Check* on the Server page lists all pending packages, *Install updates* installs them. The upgrade runs as a transient
   systemd unit (`pocketcloud-apt-<time>`) outside the daemon's sandbox; a failed run can be retried, it finishes the
   interrupted dpkg step first.
 - Pocketcloud itself: *Upgrade* on the Server page, see "What an upgrade applies". Running apps are not touched.
@@ -170,7 +174,7 @@ handling is off (`/etc/docker/daemon.json`), so a container can never publish a 
 
 ## Audit
 
-Every action in the interface is in *Audit*. On the host, auditd records privileged commands, changes under
+Every action in the interface is in *Alerts → Audit log*. On the host, auditd records privileged commands, changes under
 `/etc/pocketcloud`, `/etc/wireguard`, `/etc/docker`, `/etc/caddy`, `/etc/ssh` and the usual identity files; the
 Server → Security shows this week's summary. AIDE checks file integrity nightly at 04:30; the report is on the same tab.
 After an intended system change (upgrade, new packages) the next report lists those files; refresh the baseline with
