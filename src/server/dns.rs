@@ -1,7 +1,7 @@
 //! The VPN resolver on 10.8.0.1:53: internal names answer with the hub address, everything else is forwarded.
 //! Also a tiny client used to watch ACME challenge records.
 use anyhow::{anyhow, Context, Result};
-use hickory_proto::op::{Message, MessageType, ResponseCode};
+use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
 use hickory_proto::rr::{rdata, Name, RData, Record, RecordType};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use std::collections::HashSet;
@@ -52,17 +52,14 @@ pub async fn serve(bind: SocketAddr, upstreams: Vec<SocketAddr>, names: Internal
 
 async fn handle(query: &[u8], names: &InternalNames, upstreams: &[SocketAddr]) -> Option<Vec<u8>> {
     let msg = Message::from_bytes(query).ok()?;
-    let q = msg.queries().first()?.clone();
+    let q = msg.queries.first()?.clone();
     let qname = q.name().to_utf8();
     if names.contains(&qname).await {
-        let mut resp = Message::new();
-        resp.set_id(msg.id())
-            .set_message_type(MessageType::Response)
-            .set_op_code(msg.op_code())
-            .set_recursion_desired(msg.recursion_desired())
-            .set_recursion_available(true)
-            .set_authoritative(true)
-            .set_response_code(ResponseCode::NoError);
+        let mut resp = Message::new(msg.metadata.id, MessageType::Response, msg.metadata.op_code);
+        resp.metadata.recursion_desired = msg.metadata.recursion_desired;
+        resp.metadata.recursion_available = true;
+        resp.metadata.authoritative = true;
+        resp.metadata.response_code = ResponseCode::NoError;
         resp.add_query(q.clone());
         if matches!(q.query_type(), RecordType::A | RecordType::ANY) {
             let rec = Record::from_rdata(q.name().clone(), 60, RData::A(rdata::A(HUB_IP)));
@@ -90,11 +87,9 @@ async fn forward(query: &[u8], upstreams: &[SocketAddr]) -> Option<Vec<u8>> {
 
 /// TXT values of `name` as answered by `server`.
 pub async fn query_txt(server: SocketAddr, name: &str) -> Result<Vec<String>> {
-    let mut msg = Message::new();
-    msg.set_id(rand::random())
-        .set_message_type(MessageType::Query)
-        .set_recursion_desired(false)
-        .add_query(hickory_proto::op::Query::query(Name::from_utf8(name)?, RecordType::TXT));
+    let mut msg = Message::new(rand::random(), MessageType::Query, OpCode::Query);
+    msg.metadata.recursion_desired = false;
+    msg.add_query(hickory_proto::op::Query::query(Name::from_utf8(name)?, RecordType::TXT));
     let sock = UdpSocket::bind("0.0.0.0:0").await?;
     sock.send_to(&msg.to_bytes()?, server).await?;
     let mut buf = vec![0u8; 4096];
@@ -103,9 +98,9 @@ pub async fn query_txt(server: SocketAddr, name: &str) -> Result<Vec<String>> {
         .map_err(|_| anyhow!("dns timeout from {server}"))??;
     let resp = Message::from_bytes(&buf[..n])?;
     let mut out = Vec::new();
-    for a in resp.answers() {
-        if let Some(RData::TXT(t)) = a.data() {
-            out.push(t.txt_data().iter().map(|b| String::from_utf8_lossy(b).to_string()).collect::<Vec<_>>().join(""));
+    for a in &resp.answers {
+        if let RData::TXT(t) = &a.data {
+            out.push(t.txt_data.iter().map(|b| String::from_utf8_lossy(b).to_string()).collect::<Vec<_>>().join(""));
         }
     }
     Ok(out)
@@ -214,16 +209,13 @@ fn soa(apex: &Name, domain: &str) -> Result<Record> {
 
 async fn answer_public(query: &[u8], zone: &PublicZone) -> Option<Vec<u8>> {
     let msg = Message::from_bytes(query).ok()?;
-    let q = msg.queries().first()?.clone();
+    let q = msg.queries.first()?.clone();
     let qname = q.name().to_utf8().trim_end_matches('.').to_ascii_lowercase();
-    let mut resp = Message::new();
-    resp.set_id(msg.id())
-        .set_message_type(MessageType::Response)
-        .set_op_code(msg.op_code())
-        .set_recursion_desired(msg.recursion_desired())
-        .set_recursion_available(false)
-        .set_authoritative(true)
-        .set_response_code(ResponseCode::NoError);
+    let mut resp = Message::new(msg.metadata.id, MessageType::Response, msg.metadata.op_code);
+    resp.metadata.recursion_desired = msg.metadata.recursion_desired;
+    resp.metadata.recursion_available = false;
+    resp.metadata.authoritative = true;
+    resp.metadata.response_code = ResponseCode::NoError;
     resp.add_query(q.clone());
     let qt = q.query_type();
     for domain in &zone.domains {
@@ -238,8 +230,8 @@ async fn answer_public(query: &[u8], zone: &PublicZone) -> Option<Vec<u8>> {
                     for v in values {
                         resp.add_answer(Record::from_rdata(apex.clone(), 60, RData::TXT(rdata::TXT::new(vec![v]))));
                     }
-                    if resp.answer_count() == 0 {
-                        resp.add_name_server(soa(&apex, domain).ok()?);
+                    if resp.answers.is_empty() {
+                        resp.add_authority(soa(&apex, domain).ok()?);
                     }
                 }
                 RecordType::NS => {
@@ -249,7 +241,7 @@ async fn answer_public(query: &[u8], zone: &PublicZone) -> Option<Vec<u8>> {
                     resp.add_answer(soa(&apex, domain).ok()?);
                 }
                 _ => {
-                    resp.add_name_server(soa(&apex, domain).ok()?);
+                    resp.add_authority(soa(&apex, domain).ok()?);
                 }
             }
             return resp.to_bytes().ok();
@@ -266,7 +258,8 @@ async fn answer_public(query: &[u8], zone: &PublicZone) -> Option<Vec<u8>> {
             return resp.to_bytes().ok();
         }
     }
-    resp.set_response_code(ResponseCode::Refused).set_authoritative(false);
+    resp.metadata.response_code = ResponseCode::Refused;
+    resp.metadata.authoritative = false;
     resp.to_bytes().ok()
 }
 
@@ -275,8 +268,8 @@ mod public_tests {
     use super::*;
 
     async fn ask(zone: &PublicZone, name: &str, rt: RecordType) -> Message {
-        let mut q = Message::new();
-        q.set_id(7).set_message_type(MessageType::Query).add_query(hickory_proto::op::Query::query(Name::from_utf8(name).unwrap(), rt));
+        let mut q = Message::new(7, MessageType::Query, OpCode::Query);
+        q.add_query(hickory_proto::op::Query::query(Name::from_utf8(name).unwrap(), rt));
         Message::from_bytes(&answer_public(&q.to_bytes().unwrap(), zone).await.unwrap()).unwrap()
     }
 
@@ -288,19 +281,19 @@ mod public_tests {
         txt.set("example.com", vec!["abc".into(), "def".into()]).await;
         let zone = PublicZone { domains: vec!["example.com".into()], ips: vec!["1.2.3.4".parse().unwrap(), "2a01::1".parse().unwrap()], txt };
         let r = ask(&zone, "_acme-challenge.example.com.", RecordType::TXT).await;
-        assert_eq!(r.answer_count(), 2);
-        assert!(r.authoritative());
+        assert_eq!(r.answers.len(), 2);
+        assert!(r.metadata.authoritative);
         let r = ask(&zone, "_acme-challenge.example.com.", RecordType::NS).await;
-        assert!(matches!(r.answers()[0].data(), Some(RData::NS(_))));
+        assert!(matches!(r.answers[0].data, RData::NS(_)));
         let r = ask(&zone, "acme-ns.example.com.", RecordType::A).await;
-        assert!(matches!(r.answers()[0].data(), Some(RData::A(_))));
+        assert!(matches!(r.answers[0].data, RData::A(_)));
         let r = ask(&zone, "www.example.com.", RecordType::A).await;
-        assert_eq!(r.response_code(), ResponseCode::Refused);
+        assert_eq!(r.metadata.response_code, ResponseCode::Refused);
         let r = ask(&zone, "_acme-challenge.other.org.", RecordType::TXT).await;
-        assert_eq!(r.response_code(), ResponseCode::Refused);
+        assert_eq!(r.metadata.response_code, ResponseCode::Refused);
         zone.txt.clear("example.com").await;
         let r = ask(&zone, "_acme-challenge.example.com.", RecordType::TXT).await;
-        assert_eq!(r.answer_count(), 0);
-        assert_eq!(r.name_server_count(), 1);
+        assert_eq!(r.answers.len(), 0);
+        assert_eq!(r.authorities.len(), 1);
     }
 }

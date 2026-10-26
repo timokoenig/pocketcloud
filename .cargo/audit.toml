@@ -1,0 +1,7 @@
+# cargo audit: advisories that do not apply to this build.
+[advisories]
+ignore = [
+  # rsa (Marvin timing attack, no fix): only a dependency of sqlx-mysql, which sqlx keeps in the lockfile but a
+  # sqlite-only build never compiles. Nothing here uses RSA.
+  "RUSTSEC-2023-0071",
+]

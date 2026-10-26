@@ -31,7 +31,7 @@ argon2 = { version = "0.5", features = ["std"] }
 rand = "0.8"
 bip39 = { version = "2", features = ["rand"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
-hickory-proto = "0.24"
+hickory-proto = "0.26"
 qrcode = "0.14"
 hex = "0.4"
 base64 = "0.22"
