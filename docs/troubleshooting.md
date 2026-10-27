@@ -57,6 +57,14 @@ Run the same `pocketcloud setup <name>` again; it continues at the step that fai
 later run, setup asks for the recovery phrase: the master key only lives in memory during the run that created it.
 Enter the 24 words separated by spaces; numbers and line breaks from the printed list are ignored.
 
+## A job ends with `authorized_keys: Read-only file system`
+
+The daemon's systemd sandbox made every home directory invisible, so once ssh keys are managed from the
+interface, writing `authorized_keys` failed and with it every configuration pass. Units installed since
+2026-10-27 keep home read-only except for writing there. Upgrade pocketcloud from the Server page; the new
+unit is part of the installer that comes with the release. Keys added in the interface before that upgrade are
+written as soon as the new daemon starts.
+
 ## Setup fails with `Missing privilege separation directory: /run/sshd`
 
 The installer validates its sshd configuration with `sshd -t` before restarting ssh, and that check needs

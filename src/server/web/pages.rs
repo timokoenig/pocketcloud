@@ -599,7 +599,19 @@ pub async fn server_security(State(state): State<Shared>, user: User, Query(f): 
         aide_checked: if host.aide_checked.is_empty() { "not yet".into() } else { views::ago(&host.aide_checked) },
         aide_report: host.aide_report,
         audit_summary: host.audit_summary,
+        scan_last: match db::kv_get(&state.db, "scan.last_run").await?.as_deref() {
+            Some(t) if !t.is_empty() => views::ago(t),
+            _ => "never".into(),
+        },
     })
+}
+
+pub async fn scan_all(State(state): State<Shared>, user: User) -> R {
+    db::audit(&state.db, &user.username, "server.scan", "").await?;
+    match jobs::spawn(&state, "scan", None, vec![], |s, log| crate::server::deploy::scan_all(s, log)).await {
+        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
+        Err(e) => Ok(back("/server/security", None, Some(&e.to_string()))),
+    }
 }
 
 pub async fn ssh_keys_page(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {

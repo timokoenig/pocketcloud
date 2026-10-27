@@ -270,6 +270,20 @@ pub async fn evaluate(state: &Shared, open: &HashSet<String>) -> Vec<Observation
             "rolled_back" => v.push(obs(format!("app:{}", a.name), "warning", format!("{}: {}", a.name, a.status_detail), 0)),
             _ => {}
         }
+        // the last image scan of a running app: criticals and scans that could not run
+        if a.desired == "running" {
+            if let Ok(Some(r)) = db::last_good_release(&state.db, a.id).await {
+                let scans: Vec<super::deploy::ImageScan> = serde_json::from_str(&r.scan).unwrap_or_default();
+                let critical: usize = scans.iter().map(|s| s.critical).sum();
+                let high: usize = scans.iter().map(|s| s.high).sum();
+                let errors: Vec<&str> = scans.iter().filter(|s| !s.error.is_empty()).map(|s| s.error.as_str()).collect();
+                if critical > 0 {
+                    v.push(obs(format!("scan:{}", a.name), "warning", format!("{}: {critical} critical and {high} high vulnerabilities in its images", a.name), 0));
+                } else if !errors.is_empty() {
+                    v.push(obs(format!("scan:{}", a.name), "warning", format!("{}: image scan failed: {}", a.name, errors[0]), 0));
+                }
+            }
+        }
     }
 
     // ---- AIDE: findings, a failed or stale run

@@ -34,7 +34,7 @@ kept 14 days, metrics 48 hours; both are on the *Alerts* page (events on its *Ev
 Fixed checks run every minute and open alerts with a hold time so a blip is not a page: capacity thresholds,
 services and the Docker API, reboot pending, backups, certificates, failed deploys, AIDE findings, ssh brute
 force, ban waves, OOM kills, kernel errors, failed units, sensitive file changes, Falco by priority, WAF spikes,
-5xx bursts, containers dying, restart loops. Thresholds are editable under *Settings → Notifications*. Info-level alerts
+5xx bursts, containers dying, restart loops, critical findings in the nightly image scan. Thresholds are editable under *Settings → Notifications*. Info-level alerts
 (a newer release, a reboot happened) show but do not notify.
 
 Notifications are configured under *Settings → Notifications* (e-mail over SMTP, a webhook, the heartbeat URL), stored

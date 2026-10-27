@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::jobs::Log;
 use super::state::{Shared, State};
-use super::{compose, db, docker, reconcile};
+use super::{compose, db, docker, jobs, reconcile};
 
 pub struct Prepared {
     pub app_dir: PathBuf,
@@ -135,8 +135,7 @@ async fn deploy_inner(state: &Shared, app: &db::App, log: &Log, pull: bool) -> R
         Some(d) => docker::image_digests(d, &app.name).await,
         None => vec![],
     };
-    let scan = if pull { scan_images(state, &p.rendered.images, log).await } else { String::new() };
-    db::add_release(&state.db, app.id, &p.rendered.yaml, &images, "deployed", &scan).await?;
+    db::add_release(&state.db, app.id, &p.rendered.yaml, &images, "deployed", "").await?;
     Ok(())
 }
 
@@ -169,14 +168,15 @@ pub struct ImageScan {
     pub error: String,
 }
 
-/// Trivy on each image, local daemon only. Never blocks a deploy; the result goes to the log and the release.
-pub async fn scan_images(state: &State, images: &[String], log: &Log) -> String {
+/// Trivy on each image, local daemon only: `(label, reference)` pairs, the reference being what trivy scans
+/// (a repo@sha256 digest of a running container) and the label what the pages show.
+pub async fn scan_images(state: &State, images: &[(String, String)], log: &Log) -> String {
     if state.config.dev {
         return String::new();
     }
     let cache = state.config.data_dir.join("trivy");
     let mut out = Vec::new();
-    for image in images {
+    for (label, image) in images {
         log.line(format!("$ trivy image {image}")).await;
         let res = tokio::process::Command::new("trivy")
             .args(["image", "--quiet", "--format", "json", "--scanners", "vuln", "--severity", "HIGH,CRITICAL", "--image-src", "docker", "--timeout", "10m"])
@@ -188,7 +188,7 @@ pub async fn scan_images(state: &State, images: &[String], log: &Log) -> String 
             .stdin(std::process::Stdio::null())
             .output()
             .await;
-        let mut scan = ImageScan { image: image.clone(), ..Default::default() };
+        let mut scan = ImageScan { image: label.clone(), ..Default::default() };
         match res {
             Err(e) => scan.error = format!("trivy not available: {e}"),
             Ok(o) if !o.status.success() => scan.error = String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("trivy failed").to_string(),
@@ -227,16 +227,81 @@ pub async fn scan_images(state: &State, images: &[String], log: &Log) -> String 
     serde_json::to_string(&out).unwrap_or_default()
 }
 
-/// Scan the images of the current compose file and attach the result to the latest deployment.
+/// The images an app runs right now, by digest: `(label, reference)`, one per distinct image.
+async fn running_images(state: &State, app: &db::App) -> Vec<(String, String)> {
+    let Some(d) = &state.docker else { return vec![] };
+    let mut out: Vec<(String, String)> = Vec::new();
+    for entry in docker::image_digests(d, &app.name).await {
+        let Some((_, reference)) = entry.split_once(": ") else { continue };
+        if out.iter().any(|(_, r)| r == reference) {
+            continue;
+        }
+        // "repo@sha256:0123456789ab…" reads better than the full digest on the pages
+        let label = match reference.split_once("@sha256:") {
+            Some((repo, digest)) => format!("{repo}@sha256:{}…", digest.chars().take(12).collect::<String>()),
+            None => reference.to_string(),
+        };
+        out.push((label, reference.to_string()));
+    }
+    out
+}
+
+/// Scan what an app runs and attach the result to its latest deployment. Separate from deploys: those stay
+/// fast, and the scan sees the images by digest, exactly as they run, with no compose placeholders in the way.
 pub async fn scan(state: Shared, app_id: i64, log: Log) -> Result<()> {
     let app = db::app(&state.db, app_id).await?.ok_or_else(|| anyhow!("app not found"))?;
-    let env_dir = state.config.run_dir().join("env");
-    let rendered = compose::render(&app.compose, &app.name, app.net_index as u32, &env_dir.display().to_string())?;
-    let scan = scan_images(&state, &rendered.images, &log).await;
-    if let Some(last) = db::last_good_release(&state.db, app.id).await? {
-        db::set_release_scan(&state.db, last.id, &scan).await?;
+    scan_app(&state, &app, &log).await
+}
+
+async fn scan_app(state: &State, app: &db::App, log: &Log) -> Result<()> {
+    let images = running_images(state, app).await;
+    if images.is_empty() {
+        log.line(format!("{}: no running containers, nothing to scan", app.name)).await;
+        return Ok(());
+    }
+    let scan = scan_images(state, &images, log).await;
+    match db::last_good_release(&state.db, app.id).await? {
+        Some(last) => db::set_release_scan(&state.db, last.id, &scan).await?,
+        None => log.line("no deployment to attach the result to").await,
     }
     Ok(())
+}
+
+/// Every running app in turn, one trivy at a time; the nightly job and the button on the Security tab.
+pub async fn scan_all(state: Shared, log: Log) -> Result<()> {
+    let mut failed = 0;
+    for app in db::apps(&state.db).await?.into_iter().filter(|a| a.desired == "running") {
+        log.line(format!("--- {}", app.name)).await;
+        if let Err(e) = scan_app(&state, &app, &log).await {
+            failed += 1;
+            log.line(format!("  {e:#}")).await;
+        }
+    }
+    db::kv_set(&state.db, "scan.last_run", &db::now()).await?;
+    if failed > 0 {
+        bail!("{failed} app(s) could not be scanned");
+    }
+    Ok(())
+}
+
+/// Called once a minute from the host loop: the nightly scan at 05:00 server time, once per day.
+pub async fn scan_tick(state: &Shared) {
+    use chrono::Timelike;
+    if state.config.dev {
+        return;
+    }
+    let now = chrono::Local::now();
+    if now.hour() != 5 || now.minute() >= 5 {
+        return;
+    }
+    let today = now.format("%Y-%m-%d").to_string();
+    if db::kv_get(&state.db, "scan.last_date").await.ok().flatten().as_deref() == Some(today.as_str()) {
+        return;
+    }
+    let _ = db::kv_set(&state.db, "scan.last_date", &today).await;
+    if let Err(e) = jobs::spawn(state, "scan", None, vec![], |s, log| scan_all(s, log)).await {
+        tracing::warn!("nightly scan not started: {e:#}");
+    }
 }
 
 async fn rollback(state: &Shared, app: &db::App, log: &Log, reason: &str) -> Result<()> {

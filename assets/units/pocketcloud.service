@@ -12,7 +12,9 @@ LimitNOFILE=65536
 Environment=RUST_LOG=info
 # root: docker socket, nftables, wireguard. Confined where that does not get in the way.
 NoNewPrivileges=yes
-ProtectHome=yes
+# read-only home, except the ssh user's key directory: the daemon manages authorized_keys there (rendered by the installer)
+ProtectHome=read-only
+ReadWritePaths=-/home/${SSH_USER}/.ssh
 ProtectKernelTunables=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes

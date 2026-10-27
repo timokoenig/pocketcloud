@@ -26,6 +26,10 @@
 </div>
 
 <div class="card">
+  <div class="card-head"><div><div class="card-title">Image scans</div><div class="card-desc">Trivy checks the images every running app uses, by digest, nightly at 05:00 server time. Critical findings open an alert; results are on each app's History tab. Last run {{ scan_last }}.</div></div><form method="post" action="/server/scan" class="inline"><button class="btn btn-sm">Scan all apps now</button></form></div>
+</div>
+
+<div class="card">
   <div class="card-head"><div><div class="card-title">Banned clients</div></div>{% if banned_now > 0 %}<span class="badge warning">{{ banned_now }} banned now</span>{% else %}<span class="badge secondary plain">none banned</span>{% endif %}</div>
   {% if jails.is_empty() %}<div class="card-body"><p class="muted">No jail status available.</p></div>{% else %}
   <div class="card-body flush"><div class="table-wrap"><table>

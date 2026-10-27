@@ -62,9 +62,12 @@ a healthcheck. They are hints, not rules.
 
 ## Vulnerability scans and pinned images
 
-Every deploy that pulls images scans them with Trivy (high and critical, from the local daemon) and records the
-result with the deployment: counts on the app's *History* tab, the critical findings in the job log. Scans never block a
-deploy. *Scan* runs it again for the current images. *Apply* and a restart after a reboot recreate the containers
+Scans run apart from deploys, so a deploy is not held up by them. Nightly at 05:00 server time Trivy checks the
+images every running app uses, by digest, exactly as they run (high and critical, from the local daemon), and
+records the result with the app's latest deployment: counts on the *History* tab, the critical findings in the
+job log. An app with critical findings, or one whose scan could not run, opens a warning. *Scan* on the app page
+scans that app now; *Scan all apps now* under Server → Security scans every running app. *Apply* and a restart
+after a reboot recreate the containers
 with the images pinned to the digests of the last deployment, so a tag that was moved in the registry cannot
 slip in; only *Deploy* resolves tags again.
 

@@ -200,7 +200,8 @@ EOF
   log "removed the cloud token from the server config"
 fi
 [[ -f "$STAGE/master.key" ]] && install -m 0600 "$STAGE/master.key" /etc/pocketcloud/master.key
-install -m 0644 "$STAGE/units/pocketcloud.service" /etc/systemd/system/
+sed "s/\${SSH_USER}/${SSH_USER:-admin}/" "$STAGE/units/pocketcloud.service" > "$STAGE/units/pocketcloud.rendered"
+install -m 0644 "$STAGE/units/pocketcloud.rendered" /etc/systemd/system/pocketcloud.service
 install -m 0644 "$STAGE/units/pocketcloud-aide.service" "$STAGE/units/pocketcloud-aide.timer" /etc/systemd/system/
 sed "s/\${SSH_USER}/${SSH_USER:-admin}/" "$STAGE/audit.rules" > "$STAGE/audit.rendered"
 install -m 0640 "$STAGE/audit.rendered" /etc/audit/rules.d/pocketcloud.rules

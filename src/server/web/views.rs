@@ -369,6 +369,7 @@ pub struct SecurityPage {
     pub aide_checked: String,
     pub aide_report: String,
     pub audit_summary: String,
+    pub scan_last: String,
 }
 
 #[derive(Template)]

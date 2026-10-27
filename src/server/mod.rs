@@ -492,6 +492,7 @@ async fn daemon(config: Config) -> Result<()> {
             }
             let _ = db::purge_sessions(&st.db).await;
             backup::tick(&st).await;
+            deploy::scan_tick(&st).await;
             tick += 1;
             tokio::time::sleep(Duration::from_secs(60)).await;
         }

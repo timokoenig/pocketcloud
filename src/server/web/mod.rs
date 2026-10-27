@@ -154,6 +154,7 @@ pub fn router(state: Shared) -> Router {
         .route("/server/upgrade", post(pages::upgrade))
         .route("/server/reboot", post(pages::reboot))
         .route("/server/teardown", post(pages::teardown))
+        .route("/server/scan", post(pages::scan_all))
         .route("/server/unban", post(pages::unban))
         .route("/alerts", get(pages::alerts))
         .route("/events", get(pages::events))
