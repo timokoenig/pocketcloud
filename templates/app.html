@@ -175,7 +175,7 @@
           <option value="ports"{% if app.egress_mode == "ports" %} selected{% endif %}>only TCP ports</option>
         </select>
       </label>
-      <label class="field grow"><span>Ports</span><input name="ports" id="egress-ports" placeholder="443, 587" value="{{ app.egress_ports }}" class="mono"{% if app.egress_mode != "ports" %} hidden{% endif %}></label>
+      <label class="field grow" id="egress-ports-field"{% if app.egress_mode != "ports" %} hidden{% endif %}><span>Ports</span><input name="ports" id="egress-ports" placeholder="443, 587" value="{{ app.egress_ports }}" class="mono"></label>
       <div class="field fixed"><button class="btn">Save</button></div>
     </form>
   </div>

@@ -21,7 +21,7 @@ document.addEventListener('keydown', function (e) {
 var egressMode = document.getElementById('egress-mode');
 if (egressMode) {
   egressMode.addEventListener('change', function () {
-    document.getElementById('egress-ports').hidden = egressMode.value !== 'ports';
+    document.getElementById('egress-ports-field').hidden = egressMode.value !== 'ports';
   });
 }
 

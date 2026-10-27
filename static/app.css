@@ -214,7 +214,7 @@ input[type=number] { font-variant-numeric: tabular-nums; }
 input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); cursor: pointer; vertical-align: -3px; }
 input[type=file] { font-size: 13px; color: var(--muted-foreground); }
 input[type=file]::file-selector-button { font: inherit; font-weight: 500; color: var(--foreground); background: var(--secondary); border: 0; border-radius: 6px; padding: 5px 10px; margin-right: 10px; cursor: pointer; }
-input[hidden] { display: none; }
+input[hidden], label[hidden] { display: none; }
 .w-xs { width: 90px; flex: none; } .w-sm { width: 140px; flex: none; } .w-md { width: 220px; flex: none; } .w-lg { width: 320px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px 20px; }
 .form-grid .span-2 { grid-column: span 2; }
@@ -224,7 +224,9 @@ input[hidden] { display: none; }
 .form-row .field.fixed { flex: 0 0 auto; }
 .form-actions { display: flex; gap: 8px; align-items: center; margin-top: 20px; }
 .check { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; cursor: pointer; white-space: nowrap; }
-.checks { display: flex; gap: 14px; flex-wrap: wrap; } td .checks { flex-wrap: nowrap; }
+.checks { display: flex; gap: 8px 14px; flex-wrap: wrap; }
+td .checks { max-width: 440px; gap: 6px 12px; }
+td .checks .check { font-size: 13px; }
 .confirm-input { width: 200px; flex: none; }
 .form-row .field:has(> .confirm-input) { flex: 0 0 auto; }
 
