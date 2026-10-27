@@ -7,14 +7,16 @@ nameserver on 53 (answers only `_acme-challenge.<domain>` and `acme-ns.<domain>`
 alerts on any other listening socket (Postfix, which AIDE's package brings along, is confined to loopback). SSH is reachable
 only through the tunnel; the cloud firewall additionally drops it before it reaches the host, except while setup or
 rescue opens it for one address. The interface is a route on the WireGuard listener only. The name resolves publicly
-through the wildcard, but the public listener has no route for it and, with `strict_sni_host`, no certificate match
-either.
+through the wildcard, but the public listener has no route for it. (`strict_sni_host` is off on the public listener:
+apps share the address and the wildcard certificate, HTTP/2 clients reuse one connection across them, and iOS does not
+retry the 421 Caddy would answer with.)
 
 Public routes pass through a web application firewall before they reach the app: Coraza with the OWASP Core Rule
 Set at the default paranoia level, compiled into the Caddy binary Pocketcloud installs (`scripts/build-caddy.sh`,
 also a release asset). Request bodies are inspected up to 13 MB, larger ones are rejected; response bodies are
 not inspected. A blocked request gets a 403 and shows up under Server → Security. The WAF is on for every new public
-route and can be switched off per route for apps that trigger false positives. Internal routes and the interface
+route and can be switched off per route for apps that trigger false positives. PUT, PATCH and DELETE are allowed
+next to the CRS defaults (GET, HEAD, POST, OPTIONS), which would block every REST API. Internal routes and the interface
 are not behind it.
 
 Responses of public routes carry HSTS, `X-Content-Type-Options: nosniff`, a referrer policy and `X-Frame-Options:

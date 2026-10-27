@@ -18,8 +18,11 @@ pub struct RouteSpec {
 
 /// Coraza with the OWASP Core Rule Set, compiled into the Caddy build. Request bodies are inspected (up to the
 /// CRS default of 13 MB, bigger ones are rejected), response bodies are not.
+/// The CRS allows only GET, HEAD, POST and OPTIONS by default (rule 911100), which blocks every PUT, PATCH and DELETE
+/// of a REST API; 900200 widens that before the rules load.
 pub const WAF_DIRECTIVES: &str = "Include @coraza.conf-recommended
 Include @crs-setup.conf.example
+SecAction \"id:900200,phase:1,pass,nolog,t:none,setvar:'tx.allowed_methods=GET HEAD POST OPTIONS PUT PATCH DELETE'\"
 Include @owasp_crs/*.conf
 SecRuleEngine On
 SecResponseBodyAccess Off
@@ -131,7 +134,11 @@ pub fn render(s: &CaddySpec) -> Value {
                         "logs": {"default_logger_name": "public"},
                         "automatic_https": {"disable": true},
                         "tls_connection_policies": [{}],
-                        "strict_sni_host": true
+                        // Off: every name shares one address and the wildcard certificate, so HTTP/2 clients reuse a
+                        // connection opened for one app for another (RFC 7540 9.1.1). With it on, Caddy answers those
+                        // with 421, and iOS (CFNetwork) does not retry: images from a second host never load. Routing
+                        // is by Host either way; names without a public route still get no app.
+                        "strict_sni_host": false
                     },
                     "public_http": {
                         "listen": listen(s.public_ips, 80),
