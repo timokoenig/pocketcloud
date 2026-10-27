@@ -29,6 +29,13 @@ Guides: [docs/setup.md](docs/setup.md), [docs/apps.md](docs/apps.md),
 ## Quick start
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/timokoenig/pocketcloud/main/scripts/install.sh | sh -s -- mycloud
+```
+
+This downloads the latest release for your machine (macOS on Apple silicon, Linux x86_64 or arm64), checks its
+checksum and runs `pocketcloud setup mycloud`. The binary is deleted afterwards. To build it yourself instead:
+
+```sh
 cargo build --release                      # the local binary (macOS)
 scripts/build-linux.sh                     # the server binaries, in a podman container → dist/
 target/release/pocketcloud setup mycloud --server-binary dist/pocketcloud-aarch64-unknown-linux-musl --caddy-binary dist/caddy-aarch64-unknown-linux-musl

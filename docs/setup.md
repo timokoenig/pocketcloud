@@ -15,8 +15,11 @@ interface; nothing of it remains on this computer.
 ## Run it
 
 ```sh
-pocketcloud setup mycloud
+curl -fsSL https://raw.githubusercontent.com/timokoenig/pocketcloud/main/scripts/install.sh | sh -s -- mycloud
 ```
+
+That fetches the latest release, verifies it and runs `pocketcloud setup mycloud`. With a binary you already have,
+run `pocketcloud setup mycloud` directly.
 
 Setup asks for the tokens, the server size and location, the domains, the ssh user, the interface login, the first
 device name and the WireGuard port, the Let's Encrypt address, and whether to reuse the recovery phrase of an
