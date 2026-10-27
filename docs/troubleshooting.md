@@ -57,6 +57,15 @@ Run the same `pocketcloud setup <name>` again; it continues at the step that fai
 later run, setup asks for the recovery phrase: the master key only lives in memory during the run that created it.
 Enter the 24 words separated by spaces; numbers and line breaks from the printed list are ignored.
 
+## Setup fails with `unsupported location for server type`
+
+Hetzner does not sell every server type in every location, and its price list still names types a location no
+longer offers (cpx11 in fsn1, for example). Setup lists only the types a location can actually create since
+2026-10-27; an older binary offered everything with a price. The chosen type is part of the saved plan, so a
+plain re-run would try it again: delete `~/.cache/pocketcloud/install-<name>/` and run setup again, choosing
+another type or location. Nothing needs cleaning up in Hetzner; an ssh key or firewall that exists already is
+reused by name.
+
 ## Setup fails with `decode response of POST /servers` or similar
 
 The Hetzner API changed the shape of a response. Update Pocketcloud. The server that was being created exists and

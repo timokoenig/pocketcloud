@@ -196,7 +196,11 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
     let default_loc = locations.iter().position(|l| l.name == "fsn1").unwrap_or(0);
     let li = Select::with_theme(&theme()).with_prompt("Location").items(&loc_labels).default(default_loc).interact()?;
     let location = locations[li].name.clone();
-    let mut types: Vec<_> = hetzner.server_types().await?.into_iter().filter(|t| t.monthly_gross(&location).is_some()).collect();
+    // the price list names types a location no longer sells; `locations` says what can actually be created
+    let mut types: Vec<_> = hetzner.server_types().await?.into_iter().filter(|t| t.available_in(&location) && t.monthly_gross(&location).is_some()).collect();
+    if types.is_empty() {
+        bail!("no server type is available in {location} right now; choose another location");
+    }
     types.sort_by(|a, b| a.monthly_gross(&location).partial_cmp(&b.monthly_gross(&location)).unwrap());
     let type_labels: Vec<String> = types
         .iter()
@@ -484,7 +488,10 @@ async fn create(inst: &mut Installation, hetzner: &Hetzner, dns: &Hetzner, _args
         None => {
             let user_data = crate::cloudinit::render(&crate::cloudinit::CloudInit { hostname: &inst.name, ssh_user: &inst.server.ssh_user, ssh_public_key: &pubkey });
             info(&format!("creating server {name} ({}) in {}", inst.server.server_type, inst.server.location));
-            hetzner.create_server(&name, &inst.server.server_type, IMAGE, &inst.server.location, key.id, fw.id, &user_data, &labels).await?
+            hetzner
+                .create_server(&name, &inst.server.server_type, IMAGE, &inst.server.location, key.id, fw.id, &user_data, &labels)
+                .await
+                .with_context(|| format!("create the server; to choose another type or location delete {} and run setup again", install::dir(&inst.name).map(|p| p.display().to_string()).unwrap_or_default()))?
         }
     };
     inst.hetzner.server_id = Some(server.id);

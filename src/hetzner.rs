@@ -70,6 +70,14 @@ pub struct Datacenter {
     pub location: Named,
 }
 
+/// Where a server type is sold; the price list alone also names locations that no longer offer it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServerTypeLocation {
+    pub name: String,
+    #[serde(default)]
+    pub available: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerType {
     pub id: i64,
@@ -83,9 +91,19 @@ pub struct ServerType {
     pub deprecated: Option<bool>,
     #[serde(default)]
     pub prices: Vec<Price>,
+    #[serde(default)]
+    pub locations: Vec<ServerTypeLocation>,
 }
 
 impl ServerType {
+    /// Sold in this location right now. Older API answers carry no `locations`; then the price list has to do.
+    pub fn available_in(&self, location: &str) -> bool {
+        if self.locations.is_empty() {
+            return self.monthly_gross(location).is_some();
+        }
+        self.locations.iter().any(|l| l.name == location && l.available)
+    }
+
     pub fn monthly_gross(&self, location: &str) -> Option<f64> {
         self.prices
             .iter()
