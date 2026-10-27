@@ -217,10 +217,29 @@ pub async fn file_tailer(state: Shared, path: &'static str, source: &'static str
 /// The container's configured healthcheck runs as an exec every interval; that is Docker, not a person.
 async fn is_healthcheck(docker: &bollard::Docker, container: &str, cmd: &str) -> bool {
     let Ok(info) = docker.inspect_container(container, None).await else { return false };
-    let test = info.config.and_then(|c| c.healthcheck).and_then(|h| h.test).unwrap_or_default();
-    // ["CMD", "wget", "--spider", ...] or ["CMD-SHELL", "curl -f ..."]
-    let configured = if test.len() > 1 { test[1..].join(" ") } else { String::new() };
-    !configured.is_empty() && cmd == configured
+    let config = info.config.unwrap_or_default();
+    let test = config.healthcheck.and_then(|h| h.test).unwrap_or_default();
+    let shell = config.shell.unwrap_or_default();
+    healthcheck_command(&test, &shell).is_some_and(|c| c == cmd)
+}
+
+/// The command line an exec_create event shows for a health check. ["CMD", "wget", "-q", ...] runs as it is;
+/// ["CMD-SHELL", "pg_isready ..."] runs through the container's shell (SHELL of the image, default /bin/sh -c), so
+/// its event reads "/bin/sh -c pg_isready ...". None for NONE or an empty test.
+fn healthcheck_command(test: &[String], shell: &[String]) -> Option<String> {
+    let (kind, args) = test.split_first()?;
+    if args.is_empty() {
+        return None;
+    }
+    match kind.as_str() {
+        "CMD" => Some(args.join(" ")),
+        "CMD-SHELL" => {
+            let default = ["/bin/sh".to_string(), "-c".to_string()];
+            let shell = if shell.is_empty() { &default[..] } else { shell };
+            Some(format!("{} {}", shell.join(" "), args.join(" ")))
+        }
+        _ => None,
+    }
 }
 
 /// Docker events: containers dying, OOM kills, health changes; by compose project and service.
@@ -323,5 +342,15 @@ mod tests {
         assert!(audit_fact(r#"type=SYSCALL msg=audit(1.0:1): success=yes auid=1000 exe="/usr/local/bin/pocketcloud" key="firewall""#).is_some());
         let f = falco_fact(r#"{"priority":"Warning","rule":"Terminal shell in container","output":"A shell was spawned","output_fields":{"container.name":"site"}}"#).unwrap();
         assert_eq!((f.kind, f.data["priority"].as_str()), ("falco", Some("Warning")));
+    }
+
+    #[test]
+    fn healthcheck_commands() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(healthcheck_command(&v(&["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9000/health"]), &[]).as_deref(), Some("wget -q -O - http://127.0.0.1:9000/health"));
+        assert_eq!(healthcheck_command(&v(&["CMD-SHELL", "pg_isready -h 127.0.0.1 -U glitchtip"]), &[]).as_deref(), Some("/bin/sh -c pg_isready -h 127.0.0.1 -U glitchtip"));
+        assert_eq!(healthcheck_command(&v(&["CMD-SHELL", "exit 0"]), &v(&["/bin/bash", "-c"])).as_deref(), Some("/bin/bash -c exit 0"));
+        assert_eq!(healthcheck_command(&v(&["NONE"]), &[]), None);
+        assert_eq!(healthcheck_command(&[], &[]), None);
     }
 }
