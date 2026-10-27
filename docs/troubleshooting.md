@@ -57,6 +57,14 @@ Run the same `pocketcloud setup <name>` again; it continues at the step that fai
 later run, setup asks for the recovery phrase: the master key only lives in memory during the run that created it.
 Enter the 24 words separated by spaces; numbers and line breaks from the printed list are ignored.
 
+## Setup fails with `Missing privilege separation directory: /run/sshd`
+
+The installer validates its sshd configuration with `sshd -t` before restarting ssh, and that check needs
+`/run/sshd`, which Ubuntu's socket-activated ssh only has while the service holds it open; right after the
+package upgrade at the start of the install it can be gone. Installers since 2026-10-27 create the directory
+first. With an older binary, run the same `pocketcloud setup <name>` again: it continues at the install step
+and the directory exists again by then.
+
 ## Setup fails with `unsupported location for server type`
 
 Hetzner does not sell every server type in every location, and its price list still names types a location no

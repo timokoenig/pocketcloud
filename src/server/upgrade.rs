@@ -27,8 +27,21 @@ pub async fn stage_release(version: &str, log: &Log) -> Result<String> {
         release::fetch_verified(&version, &asset, &dest).await?;
         log.line("  checksum verified").await;
     }
-    release::write_assets(stage)?;
+    write_assets_of_staged(stage)?;
     Ok(version)
+}
+
+/// The installer that runs is the one embedded in the staged binary, so every change a release brings to the
+/// server configuration applies with that release; the running daemon only hands over.
+fn write_assets_of_staged(stage: &Path) -> Result<()> {
+    let bin = stage.join("pocketcloud");
+    std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+    let out = std::process::Command::new(&bin).arg("write-assets").arg(stage).output().context("run the staged binary")?;
+    if out.status.success() {
+        return Ok(());
+    }
+    // a staged binary from before this command exists: fall back to the running one's installer
+    release::write_assets(stage)
 }
 
 /// Use binaries someone put into a directory (an upload from the interface, a developer's scp).
@@ -48,7 +61,7 @@ pub fn stage_from_dir(dir: &Path, log_lines: &mut Vec<String>) -> Result<()> {
     if !stage.join("pocketcloud").exists() {
         bail!("no pocketcloud binary in {}", dir.display());
     }
-    release::write_assets(stage)?;
+    write_assets_of_staged(stage)?;
     Ok(())
 }
 

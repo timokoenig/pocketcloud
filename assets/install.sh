@@ -140,6 +140,9 @@ SSHD_CONF=/etc/ssh/sshd_config.d/00-hardening.conf
 if ! cmp -s "$STAGE/hardening/sshd.rendered" "$SSHD_CONF"; then
   [[ -f "$SSHD_CONF" ]] && cp -p "$SSHD_CONF" "$STAGE/hardening/sshd.previous"
   install -m 0644 "$STAGE/hardening/sshd.rendered" "$SSHD_CONF"
+  # sshd -t insists on the privilege separation directory, which only exists while the service has it open;
+  # right after a package upgrade on a socket-activated ssh it can be missing
+  install -d -m 0755 /run/sshd
   if sshd -t 2>"$STAGE/hardening/sshd.err"; then
     systemctl restart ssh
   else

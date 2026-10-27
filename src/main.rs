@@ -39,6 +39,7 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", *crypto::MasterKey::from_hex(&hex)?.phrase());
                 Ok(())
             }
+            cli::Command::WriteAssets { dir } => release::write_assets(&dir),
             cli::Command::HashPassword { password } => {
                 println!("{}", crypto::hash_password(&password)?);
                 Ok(())

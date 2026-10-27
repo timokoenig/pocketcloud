@@ -27,6 +27,10 @@ pub enum Command {
     /// Print the recovery phrase of a master key given as hex (testing)
     #[command(hide = true)]
     KeyPhrase { hex: String },
+    /// Write the installer and its files, as embedded in this binary, into a directory (the upgrade runs it on the
+    /// staged binary, so the new release's installer applies, not the running one's)
+    #[command(hide = true)]
+    WriteAssets { dir: PathBuf },
     /// Render a compose file the way the server would (debugging)
     #[command(hide = true)]
     RenderCompose {
