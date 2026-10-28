@@ -1,57 +1,46 @@
 {% extends "layout.html" %}
 {% block content %}
 <div class="page-head">
-  <div><h1>Apps</h1></div>
-  <div class="actions"><a class="btn btn-primary" href="/apps/new">New app</a></div>
+  <div><h1>Apps</h1><p class="desc">{% if apps.is_empty() %}Nothing deployed yet.{% else %}<span>{{ apps_running }} of {{ apps.len() }} running</span>{% endif %}</p></div>
+  <div class="actions"><a class="btn btn-accent" href="/apps/new">New app</a></div>
 </div>
-{% if !docker_ok %}<div class="alert err"><div class="body"><div class="title">Docker is not reachable</div>Deploys will fail. <a href="/server">Server</a></div></div>{% endif %}
-{% if let Some(c) = cert_problem %}<div class="alert err"><div class="body"><div class="title">Certificate problem</div>{{ c }}</div></div>{% endif %}
-{% if open_alerts.0 > 0 %}<div class="alert err"><div class="body"><div class="title">{{ open_alerts.0 }} critical alert{% if open_alerts.0 != 1 %}s{% endif %}{% if open_alerts.1 > 0 %} and {{ open_alerts.1 }} warning{% if open_alerts.1 != 1 %}s{% endif %}{% endif %} open</div><a href="/alerts">See the alerts</a></div></div>
-{% else if open_alerts.1 > 0 %}<div class="alert warn"><div class="body"><div class="title">{{ open_alerts.1 }} warning{% if open_alerts.1 != 1 %}s{% endif %} open</div><a href="/alerts">See the alerts</a></div></div>{% endif %}
-{% if let Some(b) = backup_warning %}<div class="alert warn"><div class="body"><div class="title">Backups</div>{{ b }} <a href="/server/backups">Backups</a></div></div>{% endif %}
-{% if host.reboot_required %}<div class="alert warn"><div class="body"><div class="title">Reboot required</div>Pending updates need a reboot. <a href="/server">Server</a></div></div>{% endif %}
+{% if !docker_ok %}<div class="alert err"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><div class="body"><div class="title">Docker is not reachable</div>Deploys will fail.</div><a class="btn btn-sm btn-secondary act" href="/server">Server</a></div>{% endif %}
+{% if let Some(c) = cert_problem %}<div class="alert err"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><div class="body"><div class="title">Certificate problem</div>{{ c }}</div></div>{% endif %}
+{% if open_alerts.0 > 0 %}<div class="alert err"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><div class="body"><div class="title">{{ open_alerts.0 }} critical alert{% if open_alerts.0 != 1 %}s{% endif %}{% if open_alerts.1 > 0 %} and {{ open_alerts.1 }} warning{% if open_alerts.1 != 1 %}s{% endif %}{% endif %} open</div></div><a class="btn btn-sm btn-secondary act" href="/alerts">See alerts</a></div>
+{% else if open_alerts.1 > 0 %}<div class="alert warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg><div class="body"><div class="title">{{ open_alerts.1 }} warning{% if open_alerts.1 != 1 %}s{% endif %} open</div></div><a class="btn btn-sm btn-secondary act" href="/alerts">See alerts</a></div>{% endif %}
+{% if let Some(b) = backup_warning %}<div class="alert warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg><div class="body"><div class="title">Backups</div>{{ b }}</div><a class="btn btn-sm btn-secondary act" href="/server/backups">Backups</a></div>{% endif %}
+{% if host.reboot_required %}<div class="alert warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg><div class="body"><div class="title">Reboot required</div>Pending updates need a reboot.</div><a class="btn btn-sm btn-secondary act" href="/server">Server</a></div>{% endif %}
 
-<div class="stats" style="--n:5">
-  <div class="stat"><div class="label">Apps running</div><div class="value">{{ apps_running }}<small>of {{ apps.len() }}</small></div></div>
+<div class="stats">
   <a class="stat{% if open_alerts.0 > 0 %} bad{% else if open_alerts.1 > 0 %} warn{% else %} good{% endif %}" href="/alerts"><div class="label">Open alerts</div><div class="value">{{ open_alerts.0 + open_alerts.1 }}{% if open_alerts.0 > 0 %}<small>{{ open_alerts.0 }} critical</small>{% endif %}</div></a>
   <a class="stat" href="/events"><div class="label">Events, 24 h</div><div class="value">{{ events_24h }}</div><div class="sub" title="{{ day_events }}">{% if day_events.is_empty() %}quiet{% else %}{{ day_events }}{% endif %}</div></a>
-  <a class="stat" href="/server"><div class="label">Disk</div><div class="value">{{ disk_used_pct }}<small>%</small></div><div class="meter{% if disk_used_pct >= 90 %} bad{% else if disk_used_pct >= 80 %} warn{% endif %}"><i style="width:{{ disk_used_pct }}%"></i></div></a>
-  <a class="stat" href="/server"><div class="label">Memory</div><div class="value">{{ mem_used_pct }}<small>%</small></div><div class="meter{% if mem_used_pct >= 95 %} bad{% else if mem_used_pct >= 85 %} warn{% endif %}"><i style="width:{{ mem_used_pct }}%"></i></div></a>
+  <a class="stat" href="/server"><div class="label">Disk</div><div class="value">{{ disk_used_pct }}<small>%</small></div><progress class="meter{% if disk_used_pct >= 90 %} bad{% else if disk_used_pct >= 80 %} warn{% endif %}" max="100" value="{{ disk_used_pct }}"></progress></a>
+  <a class="stat" href="/server"><div class="label">Memory</div><div class="value">{{ mem_used_pct }}<small>%</small></div><progress class="meter{% if mem_used_pct >= 95 %} bad{% else if mem_used_pct >= 85 %} warn{% endif %}" max="100" value="{{ mem_used_pct }}"></progress></a>
 </div>
 
-<div class="stack">
-<div class="card">
-  {% if apps.is_empty() %}
-  <div class="card-body"><div class="empty"><b>No apps yet</b>Create one from a compose file with prebuilt images.</div></div>
-  {% else %}
-  <div class="table-wrap"><table>
-    <thead><tr><th>App</th><th>Status</th><th>Hosts</th><th class="right">Updated</th></tr></thead>
-    <tbody>
-    {% for a in apps %}
-    <tr>
-      <td><a href="/apps/{{ a.id }}"><strong>{{ a.name }}</strong></a></td>
-      <td><span class="badge {{ a.status }}">{{ a.status }}</span>{% if !a.status_detail.is_empty() %}<span class="sub">{{ a.status_detail }}</span>{% endif %}</td>
-      <td class="wrap mono small">{% if a.hosts.is_empty() %}<span class="muted">no routes</span>{% else %}{{ a.hosts }}{% endif %}</td>
-      <td class="time right">{{ a.updated }}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table></div>
-  {% endif %}
+<div class="grid-3">
+  {% for a in apps %}
+  <a class="tile" href="/apps/{{ a.id }}">
+    <div class="tile-top">
+      <div class="ellipsis"><div class="tile-title">{{ a.name }}</div><div class="tile-sub">{{ a.services }} service{% if a.services != 1 %}s{% endif %} · updated {{ a.updated }}</div></div>
+      <span class="badge {{ a.status }}">{{ a.status }}</span>
+    </div>
+    {% if !a.status_detail.is_empty() %}<div class="small text-warning">{{ a.status_detail }}</div>{% endif %}
+    <div class="tile-meta">
+      {% if a.hosts.is_empty() %}<div class="muted">No routes</div>{% endif %}
+      {% for h in a.hosts %}<div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="ellipsis">{{ h }}</span></div>{% endfor %}
+    </div>
+  </a>
+  {% endfor %}
+  <a class="tile new" href="/apps/new"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New app from a compose file</a>
 </div>
 
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Recent jobs</div></div></div>
-  {% if jobs.is_empty() %}<div class="card-body"><p class="muted">No jobs yet.</p></div>{% else %}
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>Job</th><th>App</th><th>Status</th><th class="right">Started</th></tr></thead>
-    <tbody>
-    {% for j in jobs %}
-    <tr><td><a href="/jobs/{{ j.id }}">{{ j.kind }} <span class="muted">#{{ j.id }}</span></a></td><td>{{ j.app_name }}</td><td><span class="badge {{ j.status }}">{{ j.status }}</span></td><td class="time right">{{ j.created }}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table></div></div>
+<div class="section mt-4">
+  <div class="section-head"><div><h2 class="section-title">Recent activity</h2></div></div>
+  {% if jobs.is_empty() %}<p class="muted">No jobs yet.</p>{% else %}
+  <div class="rows">
+    {% for j in jobs %}<a class="row-item" href="/jobs/{{ j.id }}"><div class="row-main"><div class="row-title">{{ j.kind }} <span class="muted">{{ j.app_name }}</span></div></div><span class="badge {{ j.status }}">{{ j.status }}</span><div class="row-side">{{ j.created }}</div></a>{% endfor %}
+  </div>
   {% endif %}
-</div>
 </div>
 {% endblock %}

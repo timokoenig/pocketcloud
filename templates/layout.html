@@ -11,7 +11,7 @@
 <body>
 <header class="site-header">
   <div class="container header-inner">
-    <a class="brand" href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>pocketcloud<span class="name">{{ base.name }}</span></a>
+    <a class="brand" href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>pocketcloud<span class="name">{{ base.name }}</span></a>
     <nav class="main-nav">
       <a href="/"{% if base.nav == "apps" %} class="active"{% endif %}>Apps</a>
       <a href="/server"{% if base.nav == "server" %} class="active"{% endif %}>Server</a>
@@ -19,16 +19,24 @@
       <a href="/settings/notifications"{% if base.nav == "settings" %} class="active"{% endif %}>Settings</a>
     </nav>
     <div class="header-right">
-      <span>{{ base.user }}</span>
-      <form method="post" action="/logout" class="inline"><button class="btn btn-ghost btn-sm">Log out</button></form>
+      <details class="menu">
+        <summary class="btn btn-secondary btn-sm btn-icon" title="{{ base.user }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span class="sr-only">Menu for {{ base.user }}</span></summary>
+        <div class="menu-panel">
+          <div class="menu-label">Signed in as <b>{{ base.user }}</b></div>
+          <a class="menu-item" href="/settings/account">Account</a>
+          <a class="menu-item" href="/audit">Audit log</a>
+          <div class="menu-sep"></div>
+          <form method="post" action="/logout"><button class="menu-item">Log out</button></form>
+        </div>
+      </details>
     </div>
   </div>
 </header>
 <main class="container">
-{% if let Some(m) = base.msg %}<div class="alert ok compact"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg><div class="body">{{ m }}</div></div>{% endif %}
-{% if let Some(e) = base.error %}<div class="alert err compact"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg><div class="body">{{ e }}</div></div>{% endif %}
+{% if let Some(e) = base.error %}<div class="alert err"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><div class="body"><div class="title">That didn't work</div>{{ e }}</div></div>{% endif %}
 {% block content %}{% endblock %}
 </main>
+{% if let Some(m) = base.msg %}<div class="alert ok flash" role="status"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg><div class="body">{{ m }}</div></div>{% endif %}
 <footer>pocketcloud {{ base.version }}</footer>
 </body>
 </html>

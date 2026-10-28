@@ -59,6 +59,8 @@ pub fn validate_app_name(name: &str) -> Result<()> {
 /// What the interface shows about a compose file without rendering it.
 pub struct ServiceInfo {
     pub name: String,
+    /// `image` as written
+    pub image: String,
     /// container port from `ports` or `expose`, a hint for a route
     pub port: Option<u16>,
     /// `environment` entries as written
@@ -84,9 +86,10 @@ pub fn inspect(compose: &str) -> Result<Inspection> {
             .and_then(|p| p.as_sequence())
             .and_then(|p| p.iter().find_map(container_port))
             .or_else(|| svc.get("expose").and_then(|e| e.as_sequence()).and_then(|e| e.iter().find_map(container_port)));
+        let image = svc.get("image").and_then(|i| i.as_str()).unwrap_or_default().to_string();
         let env = environment_entries(svc.get("environment"));
         let hints = hardening_hints(svc);
-        out.push(ServiceInfo { name, port, env, hints });
+        out.push(ServiceInfo { name, image, port, env, hints });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Inspection { services: out, placeholders: placeholders(compose) })

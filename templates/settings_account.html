@@ -1,18 +1,40 @@
 {% extends "layout.html" %}
 {% block content %}
-<div class="page-head">
-  <div><h1>Settings</h1><p class="desc">Account</p></div>
-</div>
+<div class="page-head"><div><h1>Settings</h1></div></div>
 {% include "_tabs_settings.html" %}
-<div class="card" style="max-width:520px">
-  <div class="card-head"><div><div class="card-title">Change password</div><div class="card-desc">Signed in as <strong>{{ base.user }}</strong>. At least 12 characters.</div></div></div>
-  <div class="card-body">
-    <form method="post" action="/account/password" class="stack" autocomplete="off" style="--gap:16px">
-      <label class="field"><span>Current password</span><input name="current" type="password" required autocomplete="current-password"></label>
-      <label class="field" style="margin-top:16px"><span>New password</span><input name="new" type="password" required minlength="12" autocomplete="new-password"></label>
-      <label class="field" style="margin-top:16px"><span>Repeat new password</span><input name="repeat" type="password" required autocomplete="new-password"></label>
-      <div style="margin-top:20px"><button class="btn btn-primary">Change password</button></div>
-    </form>
+<div class="section narrow">
+  <div class="section-head"><div><h2 class="section-title">Change password</h2><p class="section-desc">Signed in as <strong>{{ base.user }}</strong>. At least 12 characters.</p></div></div>
+  <form method="post" action="/account/password" autocomplete="off" class="stack">
+    <label class="field"><span>Current password</span><input name="current" type="password" required autocomplete="current-password"></label>
+    <label class="field"><span>New password</span><input name="new" type="password" required minlength="12" autocomplete="new-password"></label>
+    <label class="field"><span>Repeat new password</span><input name="repeat" type="password" required autocomplete="new-password"></label>
+    <div><button class="btn btn-primary">Change password</button></div>
+  </form>
+</div>
+<div class="section danger-zone" id="teardown">
+  <div class="group-title text-danger">Danger zone</div>
+  <div class="section-head">
+    <div><h2 class="section-title text-danger">Tear down {{ base.name }}</h2><p class="section-desc">Removes every app with its volumes, wipes the server's state and master key, and powers it off. With a Hetzner token it also deletes the DNS records, the firewall, the ssh key and the server itself; tokens are used once and never stored. Backup snapshots in the bucket stay.</p></div>
+    <div class="actions">
+      <details class="dialog">
+        <summary class="btn btn-sm btn-danger">Tear down {{ base.name }}…</summary>
+        <div class="dialog-panel wide" role="dialog" aria-label="Tear down {{ base.name }}">
+          <form method="post" action="/server/teardown" autocomplete="off" data-confirm="Tear down {{ base.name }}? Apps, data and the server's keys are deleted. This cannot be undone.">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Tear down {{ base.name }}</h3></div>
+            <div class="dialog-body">
+              <label class="field"><span>Recovery phrase <span class="hint">the 24 words, the proof that this is you</span></span><textarea name="phrase" rows="3" class="code" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+              <div class="form-grid">
+                <label class="field"><span>Hetzner Cloud token <span class="hint">optional</span></span><textarea name="cloud_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+                <label class="field"><span>Hetzner DNS token <span class="hint">optional</span></span><textarea name="dns_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+              </div>
+              <p class="hint">The cloud token also deletes server, firewall and key; the DNS token defaults to the cloud token.</p>
+              <label class="field"><span>Type <code>{{ base.name }}</code> to confirm</span><input name="confirm" required autocomplete="off"></label>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-destructive">Tear down</button></div></div>
+          </form>
+        </div>
+      </details>
+    </div>
   </div>
 </div>
 {% endblock %}

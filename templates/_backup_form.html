@@ -1,0 +1,12 @@
+<form method="post" action="/server/backup-settings" autocomplete="off">
+  <div class="dialog-body">
+    <div class="form-grid">
+      <label class="field span-all"><span>S3 endpoint</span><input name="s3_endpoint" value="{{ backup_form.s3_endpoint }}" required class="mono"></label>
+      <label class="field"><span>Bucket</span><input name="bucket" value="{{ backup_form.bucket }}" required class="mono"></label>
+      <label class="field"><span>Hour of the nightly run <span class="hint">server time</span></span><input name="hour" type="number" min="0" max="23" value="{{ backup_form.hour }}"></label>
+      <label class="field"><span>Access key</span><input name="access_key" value="{{ backup_form.access_key }}" required autocomplete="off" class="mono"></label>
+      <label class="field"><span>Secret key{% if backup_form.has_secret %} <span class="hint">set; leave empty to keep</span>{% endif %}</span><textarea name="secret_key" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+    </div>
+  </div>
+  <div class="dialog-foot"><div class="end">{% if backup.enabled %}<button type="button" class="btn btn-ghost" data-close>Cancel</button>{% endif %}<button class="btn btn-primary">{% if backup.enabled %}Save{% else %}Enable backups{% endif %}</button></div></div>
+</form>

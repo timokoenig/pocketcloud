@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% block content %}
 <div class="page-head">
-  <div><h1>Server</h1><p class="desc">Security</p></div>
+  <div><h1>Server</h1></div>
 </div>
 {% include "_tabs_server.html" %}
 <div class="stack">
@@ -10,9 +10,9 @@
     <div class="card-head"><div><div class="card-title">Runtime detection</div></div></div>
     <div class="card-body">
       <form method="post" action="/server/falco" class="switch-row">
-        <input type="hidden" name="value" value="{% if falco_on %}off{% else %}on{% endif %}">
-        <button class="switch" role="switch" aria-checked="{% if falco_on %}true{% else %}false{% endif %}"></button>
         <div class="text"><b>Falco {% if falco_on %}on{% else %}off{% endif %}</b><span>Watches syscalls with an eBPF probe: shells in containers, sensitive file reads, privilege escalation. About 150 MB of memory.</span></div>
+        <input type="hidden" name="value" value="{% if falco_on %}off{% else %}on{% endif %}">
+        <button class="switch" role="switch" aria-checked="{% if falco_on %}true{% else %}false{% endif %}" aria-label="Falco"></button>
       </form>
     </div>
   </div>
@@ -26,7 +26,7 @@
 </div>
 
 <div class="card">
-  <div class="card-head"><div><div class="card-title">Image scans</div><div class="card-desc">Trivy checks the images every running app uses, by digest, nightly at 05:00 server time. Critical findings open an alert; results are on each app's History tab. Last run {{ scan_last }}.</div></div><form method="post" action="/server/scan" class="inline"><button class="btn btn-sm">Scan all apps now</button></form></div>
+  <div class="card-head"><div><div class="card-title">Image scans</div><div class="card-desc">Trivy checks the images every running app uses, by digest, nightly at 05:00 server time. Critical findings open an alert; results are on each app's Deployments tab. Last run {{ scan_last }}.</div></div><form method="post" action="/server/scan" class="inline"><button class="btn btn-sm btn-secondary">Scan all apps now</button></form></div>
 </div>
 
 <div class="card">
@@ -38,7 +38,7 @@
     {% for j in jails %}
     <tr>
       <td class="mono">{{ j.jail }}</td>
-      <td>{% if j.banned.is_empty() %}<span class="muted">none</span>{% else %}<div class="row">{% for ip in j.banned %}<form method="post" action="/server/unban" class="inline row" style="gap:6px"><input type="hidden" name="jail" value="{{ j.jail }}"><input type="hidden" name="ip" value="{{ ip }}"><span class="mono">{{ ip }}</span><button class="btn btn-link btn-xs" title="lift the ban">unban</button></form>{% endfor %}</div>{% endif %}</td>
+      <td>{% if j.banned.is_empty() %}<span class="muted">none</span>{% else %}<div class="row">{% for ip in j.banned %}<form method="post" action="/server/unban" class="inline row"><input type="hidden" name="jail" value="{{ j.jail }}"><input type="hidden" name="ip" value="{{ ip }}"><span class="mono">{{ ip }}</span><button class="btn btn-link btn-xs" title="lift the ban">unban</button></form>{% endfor %}</div>{% endif %}</td>
       <td class="num right">{{ j.total }}</td>
     </tr>
     {% endfor %}

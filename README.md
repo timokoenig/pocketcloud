@@ -16,11 +16,11 @@ manage compose apps from a web interface that is reachable through WireGuard onl
 - Public routes sit behind a web application firewall (Coraza, OWASP Core Rule Set), switchable per route.
 - Built-in monitoring: journal, auditd, Falco and Docker events plus host metrics, fixed checks, alerts by mail or
   webhook, a heartbeat for a dead man's switch. Nightly restic backups to S3 with restore.
-- **Interface**: Apps, Server (overview, backups, security), Alerts (alerts, events, audit log) and Settings
-  (notifications, VPN devices, ssh keys, registries, account); everything after setup is managed there.
+- **Interface**: Apps, Server (overview, backups, security), Alerts (alerts, host metrics, events, audit log) and Settings
+  (notifications, VPN devices, ssh keys, registries, account with teardown); everything after setup is managed there.
 - **Recovery**: lost every device? Hetzner's rescue system and `pocketcloud recover` with the 24 words give you a
   new device and, if needed, a new password. Lost the server? Setup again with the same phrase, then restore.
-  Done with it? *Tear down* on the Server page, proven by the phrase, removes apps, keys and optionally the
+  Done with it? *Tear down* under Settings → Account, proven by the phrase, removes apps, keys and optionally the
   server and DNS records.
 
 Guides: [docs/setup.md](docs/setup.md), [docs/apps.md](docs/apps.md),

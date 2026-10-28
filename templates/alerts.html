@@ -2,44 +2,41 @@
 {% block content %}
 <div class="page-head">
   <div><h1>Alerts</h1>
-    <p class="desc">{% if notify_configured %}Sent by {{ channels }}{% if !notify_last.is_empty() %} · last sent {{ notify_last }}{% endif %}{% if !heartbeat.is_empty() %} · heartbeat {{ heartbeat }}{% endif %}{% else %}No notification channel yet; alerts only show here.{% endif %} <a href="/settings/notifications">Notifications</a></p>
+    <p class="desc"><span>{% if notify_configured %}Sent by {{ channels }}{% if !notify_last.is_empty() %} · last sent {{ notify_last }}{% endif %}{% if !heartbeat.is_empty() %} · heartbeat {{ heartbeat }}{% endif %}{% else %}No notification channel yet; alerts only show here.{% endif %}</span><span class="sep"><a href="/settings/notifications">Notifications</a></span></p>
   </div>
 </div>
 {% include "_tabs_alerts.html" %}
-{% if !notify_error.is_empty() %}<div class="alert err"><div class="body"><div class="title">Last delivery failed</div>{{ notify_error }}</div></div>{% endif %}
-<div class="stack">
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Open</div></div>{% if !open.is_empty() %}<span class="badge secondary plain">{{ open.len() }}</span>{% endif %}</div>
-  {% if open.is_empty() %}<div class="card-body"><p class="ok-line"><span class="dot ok"></span>Nothing open. The server looks healthy.</p></div>{% else %}
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>Severity</th><th>Alert</th><th class="right">Since</th></tr></thead>
-    <tbody>
+{% if !notify_error.is_empty() %}<div class="alert err"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><div class="body"><div class="title">Last delivery failed</div>{{ notify_error }}</div></div>{% endif %}
+
+{% if tab == "alerts" %}
+<div class="section">
+  <div class="section-head"><div><h2 class="section-title">Open <span class="count">{{ open.len() }}</span></h2></div></div>
+  {% if open.is_empty() %}<p class="ok-line"><span class="dot ok"></span>Nothing open. The server looks healthy.</p>{% else %}
+  <div class="rows">
     {% for a in open %}
-    <tr class="{% if a.severity == "critical" %}highlight-bad{% else if a.severity == "warning" %}highlight-warn{% endif %}"><td><span class="badge {{ a.severity }}">{{ a.severity }}</span></td><td class="wrap">{{ a.summary }}</td><td class="time right">{{ a.opened }}</td></tr>
+    <div class="row-item"><span class="badge {{ a.severity }}">{{ a.severity }}</span><div class="row-main"><div class="row-title">{{ a.summary }}</div></div><div class="row-side">since {{ a.opened }}</div></div>
     {% endfor %}
-    </tbody>
-  </table></div></div>
+  </div>
   {% endif %}
 </div>
 
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Resolved</div><div class="card-desc">Last 7 days.</div></div></div>
-  {% if resolved.is_empty() %}<div class="card-body"><p class="muted">Nothing resolved in the last 7 days.</p></div>{% else %}
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>Severity</th><th>Alert</th><th class="right">Opened</th><th class="right">Resolved</th></tr></thead>
-    <tbody>
+<div class="section">
+  <div class="section-head"><div><h2 class="section-title">Resolved</h2><p class="section-desc">Last 7 days.</p></div></div>
+  {% if resolved.is_empty() %}<p class="muted">Nothing resolved in the last 7 days.</p>{% else %}
+  <div class="rows">
     {% for a in resolved %}
-    <tr><td><span class="badge {{ a.severity }} plain">{{ a.severity }}</span></td><td class="wrap">{{ a.summary }}</td><td class="time right">{{ a.opened }}</td><td class="time right">{{ a.resolved }}</td></tr>
+    <div class="row-item"><span class="badge {{ a.severity }} plain">{{ a.severity }}</span><div class="row-main"><div class="row-title">{{ a.summary }}</div><div class="row-sub">opened {{ a.opened }}</div></div><div class="row-side">resolved {{ a.resolved }}</div></div>
     {% endfor %}
-    </tbody>
-  </table></div></div>
+  </div>
   {% endif %}
 </div>
+{% endif %}
 
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Host metrics</div><div class="card-desc">Last 24 hours.</div></div></div>
-  {% if metrics.is_empty() %}<div class="card-body"><p class="muted">No samples yet.</p></div>{% else %}
-  <div class="card-body flush"><div class="table-wrap"><table>
+{% if tab == "metrics" %}
+<div class="section">
+  <div class="section-head"><div><h2 class="section-title">Host metrics</h2><p class="section-desc">Last 24 hours, sampled every minute. Thresholds are set under <a href="/settings/notifications">Notifications</a>.</p></div></div>
+  {% if metrics.is_empty() %}<div class="empty"><b>No samples yet</b>The first ones arrive within a minute of the daemon starting.</div>{% else %}
+  <div class="card"><div class="table-wrap"><table>
     <thead><tr><th>Metric</th><th>Trend</th><th class="right">Min</th><th class="right">Avg</th><th class="right">Max</th><th class="right">Now</th></tr></thead>
     <tbody>
     {% for m in metrics %}
@@ -53,5 +50,5 @@
   </table></div></div>
   {% endif %}
 </div>
-</div>
+{% endif %}
 {% endblock %}

@@ -37,34 +37,37 @@ and image digests are stored) is started again and the app shows `rolled_back` w
 the compose output live; secret values are redacted from it and from container logs.
 
 *Start* brings an app up again without pulling. *Stop* removes the containers and the network, volumes stay.
-*Remove* at the bottom of the app's *Configuration* tab asks for the name and whether to delete volumes.
+*Remove* at the bottom of the app's *Settings* tab asks for the name and whether to delete volumes.
 
 ## Secrets and environment
 
-Secrets live on the app's *Configuration* tab, sealed with the master key and never shown again; saving a name again sets a new value. Each secret
+Secrets live on the app's *Secrets* tab, sealed with the master key and never shown again; saving a name again sets a new value. Each secret
 reaches only the ticked services (all by default): a mail password for the mailer need not be in the website's
-environment. Saving with an empty value changes just the services. A `${NAME}` placeholder
+environment. Saving with an empty value changes just the services. *Import .env* sets several at once from
+`KEY=value` lines. The list groups secrets by the part of the name before the first underscore (`SMTP_HOST` and
+`SMTP_PASSWORD` under SMTP) and filters by name or service. A `${NAME}` placeholder
 in the compose file is filled from the secret of that name, and the page warns about placeholders without one.
-The *Environment* table lists the `environment` entries of every service and edits them in place. Those edits
-rewrite the compose file through the YAML model, so comments in it are lost; use *Edit compose* for anything
-beyond values.
+Each service has its own page on the *Services* tab: its state, its plain `environment` entries, the secrets that
+reach it and its routes. *Edit* there takes the plain entries as `KEY=value` lines and rewrites the compose file
+through the YAML model, so comments in it are lost; use *Edit* on the *Settings* tab for anything beyond values.
+The *Logs* tab shows the container logs of one service at a time.
 
 ## Internet access
 
 Each app's containers can reach the internet fully (default), not at all, or only on listed TCP ports (for
-example 587 for mail). The switch is under *Internet access* on the app's *Configuration* tab and takes effect at once. DNS keeps working either way,
+example 587 for mail). The switch is under *Internet access* on the app's *Network* tab and takes effect at once. DNS keeps working either way,
 because Docker's resolver answers from the host. Other apps are never reachable, whatever the setting.
 
 ## Hardening hints
 
-The *Hardening hints* panel on the app's *Overview* tab lists what a service could do better: a pinned image tag, `user`, `read_only`, `cap_drop: [ALL]`,
+The *Hardening suggestions* panel on the app's *Overview* tab (and per service on its page) lists what a service could do better: a pinned image tag, `user`, `read_only`, `cap_drop: [ALL]`,
 a healthcheck. They are hints, not rules.
 
 ## Vulnerability scans and pinned images
 
 Scans run apart from deploys, so a deploy is not held up by them. Nightly at 05:00 server time Trivy checks the
 images every running app uses, by digest, exactly as they run (high and critical, from the local daemon), and
-records the result with the app's latest deployment: counts on the *History* tab, the critical findings in the
+records the result with the app's latest deployment: counts on the *Deployments* tab, the critical findings in the
 job log. An app with critical findings, or one whose scan could not run, opens a warning. *Scan* on the app page
 scans that app now; *Scan all apps now* under Server → Security scans every running app. *Apply* and a restart
 after a reboot recreate the containers

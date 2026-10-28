@@ -18,7 +18,8 @@ pub async fn dashboard(State(state): State<Shared>, user: User, Query(f): Query<
             name: a.name.clone(),
             status: a.status.clone(),
             status_detail: a.status_detail.clone(),
-            hosts: routes.iter().filter(|r| r.app_id == a.id).map(|r| r.host.clone()).collect::<Vec<_>>().join(", "),
+            hosts: routes.iter().filter(|r| r.app_id == a.id).map(|r| r.host.clone()).collect(),
+            services: crate::server::compose::inspect(&a.compose).map(|i| i.services.len()).unwrap_or(0),
             updated: views::ago(&a.updated),
         })
         .collect();
@@ -100,6 +101,14 @@ async fn notify_status(state: &Shared) -> NotifyStatus {
 }
 
 pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
+    alerts_tab(state, user, f, "alerts").await
+}
+
+pub async fn metrics(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
+    alerts_tab(state, user, f, "metrics").await
+}
+
+async fn alerts_tab(state: Shared, user: User, f: Flash, tab: &'static str) -> R {
     let view = |a: &db::Alert| views::AlertView {
         severity: a.severity.clone(),
         summary: a.summary.clone(),
@@ -111,7 +120,7 @@ pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Fla
     let resolved: Vec<views::AlertView> = db::resolved_alerts(&state.db, &since).await?.iter().map(view).collect();
     let day = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
     let mut metrics = Vec::new();
-    for (name, label, unit) in [
+    let wanted: &[(&str, &str, &str)] = if tab != "metrics" { &[] } else { &[
         ("cpu.busy_pct", "CPU busy", "%"),
         ("mem.available_pct", "Memory available", "%"),
         ("mem.swap_used_pct", "Swap used", "%"),
@@ -120,7 +129,8 @@ pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Fla
         ("load.1", "Load (1 min)", ""),
         ("pressure.mem_full_avg10", "Memory pressure", "%"),
         ("pressure.io_full_avg10", "IO pressure", "%"),
-    ] {
+    ] };
+    for &(name, label, unit) in wanted {
         let series = db::metric_series(&state.db, name, &day).await?;
         if series.is_empty() {
             continue;
@@ -151,7 +161,8 @@ pub async fn alerts(State(state): State<Shared>, user: User, Query(f): Query<Fla
     }
     let n = notify_status(&state).await;
     html(views::AlertsPage {
-        base: views::Base::new("Alerts", &user.username, &state.config.name, &f),
+        base: views::Base::new(if tab == "metrics" { "Host metrics" } else { "Alerts" }, &user.username, &state.config.name, &f),
+        tab,
         open,
         resolved,
         notify_configured: n.configured,
@@ -947,16 +958,16 @@ pub struct TeardownForm {
 /// The recovery phrase is the proof: the master key never leaves the server, so only its owner can produce it.
 pub async fn teardown(State(state): State<Shared>, user: User, Form(f): Form<TeardownForm>) -> R {
     if f.confirm.trim() != state.config.name {
-        return Ok(back("/server", None, Some("type the installation name to confirm")));
+        return Ok(back("/settings/account", None, Some("type the installation name to confirm")));
     }
     let key = match crate::crypto::MasterKey::from_phrase(&f.phrase) {
         Ok(k) => k,
-        Err(_) => return Ok(back("/server", None, Some("that is not a valid recovery phrase"))),
+        Err(_) => return Ok(back("/settings/account", None, Some("that is not a valid recovery phrase"))),
     };
     if key.to_hex().as_str() != state.key.to_hex().as_str() {
         db::audit(&state.db, &user.username, "server.teardown.refused", "phrase mismatch").await?;
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        return Ok(back("/server", None, Some("the phrase does not match this server's master key")));
+        return Ok(back("/settings/account", None, Some("the phrase does not match this server's master key")));
     }
     db::audit(&state.db, &user.username, "server.teardown", "").await?;
     let non_empty = |s: String| if s.trim().is_empty() { None } else { Some(s.trim().to_string()) };
@@ -964,7 +975,7 @@ pub async fn teardown(State(state): State<Shared>, user: User, Form(f): Form<Tea
     let redact: Vec<String> = tokens.cloud.iter().chain(tokens.dns.iter()).cloned().collect();
     match jobs::spawn(&state, "teardown", None, redact, move |s, log| crate::server::teardown::teardown_job(s, tokens, log)).await {
         Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
-        Err(e) => Ok(back("/server", None, Some(&e.to_string()))),
+        Err(e) => Ok(back("/settings/account", None, Some(&e.to_string()))),
     }
 }
 

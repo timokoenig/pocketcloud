@@ -22,7 +22,7 @@ can log in, which is the state right after setup.
 
 ## Monitoring and alerts
 
-Open and resolved alerts, with the host metrics of the last day, are on the *Alerts* page; what to send and
+Open and resolved alerts are on the *Alerts* page, the host metrics of the last day on its *Host metrics* tab; what to send and
 where is under *Settings → Notifications*.
 
 The daemon watches the server itself; nothing else runs for it. Collectors: facts from the journal (ssh logins
@@ -113,7 +113,7 @@ restic restore latest --target /tmp/restore --include /var/lib/docker/volumes/<v
 
 Restore in the interface:
 
-- **One app**: *Restore from a snapshot* under *Backup* on the app's *Configuration* tab, pick a snapshot, type
+- **One app**: *Restore from a snapshot* under *Backup* on the app's *Settings* tab, pick a snapshot, type
   the app name. The app is
   stopped, its volumes and `files` are replaced by the snapshot's, database dumps are replayed into the database
   services (started first, alone), then everything starts. Current data is overwritten.
@@ -131,7 +131,7 @@ choosing the bucket's project.
 
 ## Teardown
 
-*Tear down this server* at the bottom of the Server page ends an installation. It asks for the recovery phrase,
+*Tear down* in the danger zone at the bottom of Settings → Account ends an installation. It asks for the recovery phrase,
 which is the proof of ownership (the master key never leaves the server, so only its owner can produce it), and
 the installation name. Then, as a job you can watch until the tunnel drops: a critical notification goes out
 first; every app is removed with its volumes; with a Hetzner DNS token the records setup wrote (the domain and

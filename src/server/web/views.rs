@@ -2,7 +2,6 @@
 use askama::Template;
 
 use crate::server::db;
-use crate::server::docker::ContainerInfo;
 use crate::server::system::HostStatus;
 
 pub struct Base {
@@ -20,7 +19,7 @@ impl Base {
     pub fn new(title: &str, user: &str, name: &str, flash: &super::auth::Flash) -> Base {
         let nav = match title {
             "Server" | "Backups" | "Security" => "server",
-            "Alerts" | "Events" | "Audit log" => "alerts",
+            "Alerts" | "Host metrics" | "Events" | "Audit log" => "alerts",
             "Notifications" | "VPN devices" | "SSH keys" | "Registries" | "Account" => "settings",
             _ => "apps",
         };
@@ -75,7 +74,8 @@ pub struct AppRow {
     pub name: String,
     pub status: String,
     pub status_detail: String,
-    pub hosts: String,
+    pub hosts: Vec<String>,
+    pub services: usize,
     pub updated: String,
 }
 
@@ -163,6 +163,7 @@ impl AppView {
     }
 }
 
+#[derive(Clone)]
 pub struct RouteView {
     pub id: i64,
     pub host: String,
@@ -173,11 +174,14 @@ pub struct RouteView {
     pub headers: bool,
 }
 
+#[derive(Clone)]
 pub struct SecretView {
     pub key: String,
     pub updated: String,
     /// empty: every service
     pub services: Vec<String>,
+    /// saved after the last deployment
+    pub changed: bool,
 }
 
 pub struct ReleaseView {
@@ -207,23 +211,27 @@ pub fn scan_summary(json: &str) -> (String, bool, Vec<String>) {
 #[template(path = "app.html")]
 pub struct AppShow {
     pub base: Base,
-    /// overview | config | history
+    /// overview | services | logs | secrets | network | deployments | settings
     pub tab: &'static str,
     pub app: AppView,
-    pub containers: Vec<ContainerInfo>,
     pub routes: Vec<RouteView>,
     pub secrets: Vec<SecretView>,
+    /// the secrets grouped by the part of the name before the first underscore
+    pub secret_groups: Vec<SecretGroup>,
     pub releases: Vec<ReleaseView>,
     pub jobs: Vec<JobRow>,
+    /// service names from the compose file
     pub services: Vec<String>,
+    /// one per service of the compose file, with its container when there is one
+    pub service_views: Vec<ServiceView>,
+    /// the service picked on the Services and Logs tabs
+    pub service: String,
     pub active_job: Option<i64>,
     pub domains: Vec<String>,
     pub waf_available: bool,
     /// per service: container port from the compose file, for the route form
     pub hints: Vec<ServiceHint>,
     pub suggest: Option<ServiceHint>,
-    /// `environment` entries of all services
-    pub env: Vec<EnvView>,
     /// `${NAME}` placeholders in the compose file without a secret
     pub missing: Vec<String>,
     /// (service, hint)
@@ -231,6 +239,42 @@ pub struct AppShow {
     /// backups are configured for this installation; the app's own switch is `app.backup`
     pub backup_enabled: bool,
     pub snapshots: Vec<crate::server::backup::Snapshot>,
+    /// secrets saved after the last deployment
+    pub changed_secrets: usize,
+    pub compose: String,
+    /// Logs tab
+    pub log: String,
+    pub tail: usize,
+    /// running containers / services of the compose file
+    pub running: usize,
+}
+
+pub struct ServiceView {
+    pub name: String,
+    /// from the container when one exists, else from the compose file
+    pub image: String,
+    /// container state; `not created` when there is no container
+    pub state: String,
+    /// `state` usable as a class name
+    pub state_class: String,
+    pub health: String,
+    pub status: String,
+    pub port: String,
+    /// non-secret environment entries
+    pub env: Vec<EnvView>,
+    /// environment entries that are `${NAME}`
+    pub env_secrets: Vec<EnvView>,
+    /// `KEY=value` lines of the plain entries, for the editor
+    pub env_text: String,
+    /// names of the secrets that reach this service
+    pub secrets: Vec<String>,
+    pub routes: Vec<RouteView>,
+    pub hints: Vec<String>,
+}
+
+pub struct SecretGroup {
+    pub name: String,
+    pub secrets: Vec<SecretView>,
 }
 
 pub struct ServiceHint {
@@ -239,6 +283,7 @@ pub struct ServiceHint {
     pub port: u16,
 }
 
+#[derive(Clone)]
 pub struct EnvView {
     pub service: String,
     pub key: String,
@@ -268,16 +313,6 @@ pub struct JobPage {
     pub finished: String,
     pub log: String,
     pub running: bool,
-}
-
-#[derive(Template)]
-#[template(path = "logs.html")]
-pub struct LogsPage {
-    pub base: Base,
-    pub app: AppView,
-    pub service: String,
-    pub log: String,
-    pub tail: usize,
 }
 
 pub struct PeerView {
@@ -420,6 +455,8 @@ pub struct AuditPage {
 #[template(path = "alerts.html")]
 pub struct AlertsPage {
     pub base: Base,
+    /// alerts | metrics
+    pub tab: &'static str,
     pub open: Vec<AlertView>,
     pub resolved: Vec<AlertView>,
     pub notify_configured: bool,

@@ -118,7 +118,7 @@ fix the records in the Hetzner console (setup writes them; a rebuild rewrites th
 ## A request to an app gets a 403 it should not
 
 The WAF blocked it. Server → Security lists blocked requests with client, request and transaction id; the matching
-rule is in Caddy's log (`journalctl -u caddy -g <id>`). Switch the WAF off for that route on the app's *Overview* tab if the app legitimately sends what the
+rule is in Caddy's log (`journalctl -u caddy -g <id>`). Switch the WAF off for that route on the app's *Network* tab if the app legitimately sends what the
 rule flags (raw SQL in a form, large JSON bodies over 13 MB, unusual headers).
 
 ## The Security tab says the WAF is unavailable
@@ -129,7 +129,7 @@ upload field on the server page, or `scripts/push-dev.sh <target> caddy`.
 
 ## An app cannot reach the internet
 
-Check *Internet access* on the app's *Configuration* tab. With `none` or a port list, anything else is dropped by the firewall;
+Check *Internet access* on the app's *Network* tab. With `none` or a port list, anything else is dropped by the firewall;
 mail needs 587 or 465, webhooks 443. DNS is not affected.
 
 ## A deploy fails or rolls back
@@ -138,7 +138,7 @@ The job page shows the compose output. Usual causes: the image cannot be pulled 
 *Settings → Registries*, check the image name), a service never becomes healthy within three minutes (the healthcheck is
 wrong, or the app rejects its configuration, often a secret in the wrong format), or a route points at a service
 that is not in the file. When a service is unhealthy the job log ends with the container states and their last
-log lines; the same logs are on the app's *Overview* tab per service. The containers of a failed first deploy keep running
+log lines; the same logs are on the app's *Logs* tab per service. The containers of a failed first deploy keep running
 and restarting until the next deploy or a stop.
 
 ## ssh over the VPN says "Connection refused"
@@ -162,7 +162,7 @@ Nothing on your devices is irreplaceable; the recovery phrase is. The way back:
    connects and the interface is back.
 
 Console access alone is not enough on purpose: without the phrase, `recover` does nothing. The same phrase is
-what *Tear down* on the Server page asks for, see operations.md.
+what *Tear down* under Settings → Account asks for, see operations.md.
 
 ## Locked out: no tunnel, no ssh
 

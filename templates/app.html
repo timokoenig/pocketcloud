@@ -1,261 +1,500 @@
 {% extends "layout.html" %}
 {% block content %}
-<div class="crumbs"><a href="/">Apps</a><span>/</span><span>{{ app.name }}</span></div>
+<a class="back" href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>Apps</a>
 <div class="page-head">
   <div>
-    <h1>{{ app.name }} <span class="badge {{ app.status }}">{{ app.status }}</span></h1>
-    <p class="desc">Network <span class="mono">{{ app.subnet }}</span> · created {{ app.created }} · updated {{ app.updated }}</p>
+    <h1>{{ app.name }} <span class="badge lg {{ app.status }}">{{ app.status }}</span></h1>
+    <p class="desc"><span>{{ services.len() }} service{% if services.len() != 1 %}s{% endif %}{% if running > 0 %}, {{ running }} running{% endif %}</span><span class="sep">{{ routes.len() }} route{% if routes.len() != 1 %}s{% endif %}</span><span class="sep">updated {{ app.updated }}</span></p>
   </div>
   <div class="actions">
     {% if let Some(j) = active_job %}
-      <a class="btn" href="/jobs/{{ j }}">Job #{{ j }} running…</a>
+      <a class="btn btn-secondary" href="/jobs/{{ j }}"><span class="dot warn"></span>Job #{{ j }} running…</a>
     {% else %}
-      {% if app.desired == "running" %}
-      <form method="post" action="/apps/{{ app.id }}/apply" class="inline"><button class="btn" title="recreate the containers with the current file and secrets; images stay pinned">Apply</button></form>
-      <form method="post" action="/apps/{{ app.id }}/scan" class="inline"><button class="btn" title="vulnerability scan of the images">Scan</button></form>
-      <form method="post" action="/apps/{{ app.id }}/stop" class="inline" data-confirm="Stop {{ app.name }}? Its containers are removed, volumes stay."><button class="btn">Stop</button></form>
-      {% else %}
-      <form method="post" action="/apps/{{ app.id }}/start" class="inline"><button class="btn" title="start without pulling">Start</button></form>
-      {% endif %}
-      <a class="btn" href="/apps/{{ app.id }}/edit">Edit compose</a>
-      <form method="post" action="/apps/{{ app.id }}/deploy" class="inline"><button class="btn btn-primary" title="pull the images, then start">Deploy</button></form>
+      <details class="menu">
+        <summary class="btn btn-secondary">More<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <div class="menu-panel">
+          {% if app.desired == "running" %}
+          <form method="post" action="/apps/{{ app.id }}/apply"><button class="menu-item">Apply configuration<small>Recreate containers with the current file and secrets; images stay</small></button></form>
+          <form method="post" action="/apps/{{ app.id }}/scan"><button class="menu-item">Scan images<small>Look for known vulnerabilities</small></button></form>
+          <form method="post" action="/apps/{{ app.id }}/stop" data-confirm="Stop {{ app.name }}? Its containers are removed, volumes stay."><button class="menu-item">Stop<small>Remove the containers, keep the volumes</small></button></form>
+          {% else %}
+          <form method="post" action="/apps/{{ app.id }}/start"><button class="menu-item">Start<small>Start without pulling images</small></button></form>
+          {% endif %}
+          <div class="menu-sep"></div>
+          <a class="menu-item" href="/apps/{{ app.id }}/edit">Edit compose file</a>
+        </div>
+      </details>
+      <form method="post" action="/apps/{{ app.id }}/deploy" class="inline"><button class="btn btn-accent" title="pull the images, then start">Deploy</button></form>
     {% endif %}
   </div>
 </div>
-{% if !app.status_detail.is_empty() %}<div class="alert warn"><div class="body">{{ app.status_detail }}</div></div>{% endif %}
-{% if !missing.is_empty() %}<div class="alert warn"><div class="body"><div class="title">Secrets missing</div>Referenced in the compose file but not set: {% for m in missing %}<code>{{ m }}</code> {% endfor %}{% if tab != "config" %}<a href="/apps/{{ app.id }}/config">Configuration</a>{% endif %}</div></div>{% endif %}
+
+{% if !app.status_detail.is_empty() %}<div class="alert warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg><div class="body">{{ app.status_detail }}</div></div>{% endif %}
+{% if !missing.is_empty() && tab != "secrets" %}<div class="alert warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg><div class="body"><div class="title">{{ missing.len() }} secret{% if missing.len() != 1 %}s{% endif %} missing</div>The compose file uses {% for m in missing %}<code>{{ m }}</code>{% if !loop.last %}, {% endif %}{% endfor %} but no value is set.</div><a class="btn btn-sm btn-secondary act" href="/apps/{{ app.id }}/secrets">Set values</a></div>{% endif %}
+{% if changed_secrets > 0 && app.desired == "running" && active_job.is_none() %}<div class="alert info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg><div class="body"><div class="title">{{ changed_secrets }} secret{% if changed_secrets != 1 %}s{% endif %} changed since the last deploy</div>The running containers still use the old values.</div><form method="post" action="/apps/{{ app.id }}/apply" class="act"><button class="btn btn-sm btn-primary">Apply now</button></form></div>{% endif %}
 
 <nav class="tabs">
   <a href="/apps/{{ app.id }}"{% if tab == "overview" %} class="active"{% endif %}>Overview</a>
-  <a href="/apps/{{ app.id }}/config"{% if tab == "config" %} class="active"{% endif %}>Configuration</a>
-  <a href="/apps/{{ app.id }}/history"{% if tab == "history" %} class="active"{% endif %}>History</a>
+  <a href="/apps/{{ app.id }}/services"{% if tab == "services" %} class="active"{% endif %}>Services <span class="count">{{ services.len() }}</span></a>
+  <a href="/apps/{{ app.id }}/logs"{% if tab == "logs" %} class="active"{% endif %}>Logs</a>
+  <a href="/apps/{{ app.id }}/secrets"{% if tab == "secrets" %} class="active"{% endif %}>Secrets {% if !missing.is_empty() %}<span class="count warn">{{ missing.len() }} missing</span>{% else %}<span class="count">{{ secrets.len() }}</span>{% endif %}</a>
+  <a href="/apps/{{ app.id }}/network"{% if tab == "network" %} class="active"{% endif %}>Network</a>
+  <a href="/apps/{{ app.id }}/history"{% if tab == "deployments" %} class="active"{% endif %}>Deployments</a>
+  <a href="/apps/{{ app.id }}/settings"{% if tab == "settings" %} class="active"{% endif %}>Settings</a>
 </nav>
 
+{# ================= Overview ================= #}
 {% if tab == "overview" %}
-<div class="stack">
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Services</div></div></div>
-  {% if containers.is_empty() %}
-  <div class="card-body"><div class="empty"><b>No containers</b>{% if !services.is_empty() %}The compose file defines {{ services.join(", ") }}. Deploy to start them.{% endif %}</div></div>
-  {% else %}
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>Service</th><th>State</th><th>Image</th><th></th></tr></thead>
-    <tbody>
-    {% for c in containers %}
-    <tr>
-      <td><strong>{{ c.service }}</strong></td>
-      <td><span class="badge {{ c.state }}">{{ c.state }}</span> {% if !c.health.is_empty() %}<span class="badge {{ c.health }}">{{ c.health }}</span>{% endif %}<span class="sub">{{ c.status }}</span></td>
-      <td class="mono small wrap">{{ c.image }}</td>
-      <td class="actions"><a class="btn btn-sm" href="/apps/{{ app.id }}/logs/{{ c.service }}">Logs</a></td>
-    </tr>
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Services</h2><p class="section-desc">{% if running == 0 %}Nothing is running. Deploy to start the services.{% else %}{{ running }} of {{ service_views.len() }} running.{% endif %}</p></div>
+  </div>
+  {% if service_views.is_empty() %}<div class="empty"><b>No services</b>The compose file defines none.</div>{% else %}
+  <div class="grid-3">
+    {% for s in service_views %}
+    <a class="tile" href="/apps/{{ app.id }}/services/{{ s.name }}">
+      <div class="tile-top">
+        <div class="ellipsis"><div class="tile-title">{{ s.name }}</div><div class="tile-sub mono ellipsis" title="{{ s.image }}">{{ s.image }}</div></div>
+        <span class="badge {{ s.state_class }}">{% if !s.health.is_empty() %}{{ s.health }}{% else %}{{ s.state }}{% endif %}</span>
+      </div>
+      <div class="tile-meta">
+        {% for r in s.routes %}<div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="ellipsis">{{ r.host }}</span></div>{% endfor %}
+        <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h7"/></svg>{{ s.env.len() }} variable{% if s.env.len() != 1 %}s{% endif %}<span class="faint">·</span>{{ s.secrets.len() }} secret{% if s.secrets.len() != 1 %}s{% endif %}</div>
+      </div>
+    </a>
     {% endfor %}
-    </tbody>
-  </table></div></div>
+  </div>
   {% endif %}
 </div>
 
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Routes</div><div class="card-desc">Hosts on {{ domains.join(", ") }} or one label below. Internal routes resolve only through the VPN.</div></div></div>
-  {% if !waf_available %}<div class="card-body" style="padding-bottom:0"><div class="alert warn compact"><div class="body">The installed Caddy has no WAF module; public routes run without it. Upgrade pocketcloud on the <a href="/server">Server</a> page.</div></div></div>{% endif %}
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>Host</th><th>Service</th><th>Port</th><th>Exposure</th><th>WAF</th><th>Headers</th><th></th></tr></thead>
-    <tbody>
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Routes</h2><p class="section-desc">Where the app is reachable.</p></div>
+    <div class="actions"><a class="btn btn-sm btn-secondary" href="/apps/{{ app.id }}/network">Manage</a></div>
+  </div>
+  {% if routes.is_empty() %}<div class="empty"><b>No routes yet</b>Nothing outside the app's own network can reach it.<br><a class="btn btn-sm btn-secondary" href="/apps/{{ app.id }}/network">Add a route</a></div>{% else %}
+  <div class="rows">
     {% for r in routes %}
-    <tr>
-      <td class="mono"><a href="https://{{ r.host }}" target="_blank" rel="noopener">{{ r.host }}</a></td>
-      <td>{{ r.service }}</td><td class="num">{{ r.port }}</td>
-      <td><span class="badge {{ r.expose }}">{{ r.expose }}</span></td>
-      {% if r.expose == "public" %}
-      <td><form method="post" action="/apps/{{ app.id }}/routes/{{ r.id }}/flag" class="inline"><input type="hidden" name="what" value="waf"><input type="hidden" name="value" value="{% if r.waf %}off{% else %}on{% endif %}"><button class="switch" role="switch" aria-checked="{% if r.waf %}true{% else %}false{% endif %}" title="{% if r.waf %}WAF is on; click to switch it off{% else %}WAF is off; click to switch it on{% endif %}"></button></form></td>
-      <td><form method="post" action="/apps/{{ app.id }}/routes/{{ r.id }}/flag" class="inline"><input type="hidden" name="what" value="headers"><input type="hidden" name="value" value="{% if r.headers %}off{% else %}on{% endif %}"><button class="switch" role="switch" aria-checked="{% if r.headers %}true{% else %}false{% endif %}" title="{% if r.headers %}security headers are on; click to switch them off{% else %}security headers are off; click to switch them on{% endif %}"></button></form></td>
-      {% else %}<td class="muted">–</td><td class="muted">–</td>{% endif %}
-      <td class="actions"><form method="post" action="/apps/{{ app.id }}/routes/{{ r.id }}/delete" class="inline" data-confirm="Remove route {{ r.host }}?"><button class="btn btn-ghost btn-sm btn-danger">Remove</button></form></td>
-    </tr>
+    <div class="row-item">
+      <div class="row-main"><div class="row-title"><a href="https://{{ r.host }}" target="_blank" rel="noopener">{{ r.host }}</a></div><div class="row-sub">to <span class="mono">{{ r.service }}:{{ r.port }}</span></div></div>
+      <div class="row-actions">{% if r.expose == "public" %}{% if !r.waf %}<span class="badge warning plain">WAF off</span>{% endif %}{% endif %}<span class="badge {{ r.expose }}">{{ r.expose }}</span></div>
+    </div>
     {% endfor %}
-    <tr class="add-row">
-      <form method="post" action="/apps/{{ app.id }}/routes" id="route-form">
-      <td><input name="host" id="route-host" placeholder="shop.{{ domains[0] }}" required{% if let Some(h) = suggest %} value="{{ h.host }}" data-suggested="{{ h.host }}"{% endif %}></td>
-      <td><select name="service" id="route-service">{% for h in hints %}<option value="{{ h.name }}" data-port="{{ h.port }}" data-host="{{ h.host }}"{% if let Some(sg) = suggest %}{% if sg.name == h.name %} selected{% endif %}{% endif %}>{{ h.name }}</option>{% endfor %}</select></td>
-      <td><input name="port" id="route-port" type="number" min="1" max="65535" value="{% if let Some(h) = suggest %}{{ h.port }}{% else %}80{% endif %}" required class="w-xs"></td>
-      <td><select name="expose"><option value="public">public</option><option value="internal">internal</option></select></td>
-      <td><label class="check"><input type="checkbox" name="waf" value="on" checked> on</label></td>
-      <td><label class="check"><input type="checkbox" name="headers" value="on" checked> on</label></td>
-      <td class="actions"><button class="btn btn-sm">Add</button></td>
-      </form>
-    </tr>
-    </tbody>
-  </table></div></div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Latest deployment</h2></div>
+    {% if !releases.is_empty() %}<div class="actions"><a class="btn btn-sm btn-secondary" href="/apps/{{ app.id }}/history">All deployments</a></div>{% endif %}
+  </div>
+  {% if let Some(r) = releases.first() %}
+  <div class="rows"><div class="row-item">
+    <div class="row-main"><div class="row-title">Release #{{ r.id }} <span class="badge {{ r.outcome }}">{{ r.outcome }}</span>{% if !r.scan.is_empty() %}<span class="badge plain {% if r.scan_bad %}destructive{% else %}secondary{% endif %}">{{ r.scan }}</span>{% endif %}</div><div class="row-sub">{{ r.images.len() }} image{% if r.images.len() != 1 %}s{% endif %}</div></div>
+    <div class="row-side">{{ r.created }}</div>
+  </div></div>
+  {% else %}<div class="empty"><b>Not deployed yet</b>Deploy pulls the images and starts every service.</div>{% endif %}
 </div>
 
 {% if !hardening.is_empty() %}
 <details class="disclosure">
-  <summary>Hardening hints <span class="hint">{{ hardening.len() }} suggestion{% if hardening.len() != 1 %}s{% endif %} for the compose file</span></summary>
+  <summary>Hardening suggestions <span class="hint">{{ hardening.len() }} for the compose file</span></summary>
   <div class="content"><ul class="bullets">{% for h in hardening %}<li><strong>{{ h.0 }}</strong>: {{ h.1 }}</li>{% endfor %}</ul></div>
 </details>
 {% endif %}
-</div>
 {% endif %}
 
-{% if tab == "config" %}
-<div class="stack">
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Secrets</div><div class="card-desc">Reach the ticked services as environment variables and fill <code>${NAME}</code> in the compose file. Values are never shown again.</div></div></div>
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>Name</th><th>Services</th><th>Value</th><th class="right">Updated</th><th></th></tr></thead>
-    <tbody>
-    {% for s in secrets %}
-    <tr>
-      <td class="mono">{{ s.key }}</td>
-      <form method="post" action="/apps/{{ app.id }}/secrets" autocomplete="off" id="secret-{{ s.key }}">
-      <td><div class="checks">{% for svc in services %}<label class="check"><input type="checkbox" name="svc_{{ svc }}" value="on"{% if s.services.is_empty() || s.services.contains(svc) %} checked{% endif %}> {{ svc }}</label>{% endfor %}</div></td>
-      <td><input type="hidden" name="key" value="{{ s.key }}"><textarea name="value" class="secret" rows="1" placeholder="new value" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></td>
-      <td class="time right">{{ s.updated }}</td>
-      <td class="actions"><button class="btn btn-sm">Save</button><button class="btn btn-ghost btn-sm btn-danger" form="secret-delete-{{ s.key }}">Remove</button></td>
-      </form>
-      <form method="post" action="/apps/{{ app.id }}/secrets/delete" id="secret-delete-{{ s.key }}" data-confirm="Remove secret {{ s.key }}?"><input type="hidden" name="key" value="{{ s.key }}"></form>
-    </tr>
-    {% endfor %}
-    <tr class="add-row">
-      <form method="post" action="/apps/{{ app.id }}/secrets" autocomplete="off">
-      <td><input name="key" placeholder="DATABASE_URL" pattern="[A-Za-z_][A-Za-z0-9_]*" required autocomplete="off" spellcheck="false" class="mono" data-1p-ignore data-lpignore="true" data-bwignore{% if let Some(m) = missing.first() %} value="{{ m }}"{% endif %}></td>
-      <td><div class="checks">{% for svc in services %}<label class="check"><input type="checkbox" name="svc_{{ svc }}" value="on" checked> {{ svc }}</label>{% endfor %}</div></td>
-      <td><textarea name="value" class="secret" rows="1" placeholder="value" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></td>
-      <td></td>
-      <td class="actions"><button class="btn btn-sm">Add</button></td>
-      </form>
-    </tr>
-    </tbody>
-  </table></div></div>
-</div>
+{# ================= Services ================= #}
+{% if tab == "services" %}
+{% if service_views.is_empty() %}<div class="empty"><b>No services</b>The compose file defines none.</div>{% else %}
+<div class="split">
+  <nav class="side-nav">
+    <div class="label">Services</div>
+    {% for s in service_views %}<a href="/apps/{{ app.id }}/services/{{ s.name }}"{% if s.name == service %} class="active"{% endif %}><span class="dot {{ s.state_class }}"></span>{{ s.name }}<span class="faint">{{ s.state }}</span></a>{% endfor %}
+  </nav>
+  <div>
+  {% for s in service_views %}{% if s.name == service %}
+    <div class="detail-head">
+      <div>
+        <h2>{{ s.name }} <span class="badge {{ s.state_class }}">{{ s.state }}</span>{% if !s.health.is_empty() %}<span class="badge {{ s.health }}">{{ s.health }}</span>{% endif %}</h2>
+        <p class="sub"><span class="mono">{{ s.image }}</span>{% if !s.port.is_empty() %} · port {{ s.port }}{% endif %}{% if !s.status.is_empty() %} · {{ s.status }}{% endif %}</p>
+      </div>
+      <div class="actions"><a class="btn btn-sm btn-secondary" href="/apps/{{ app.id }}/logs?service={{ s.name }}">View logs</a></div>
+    </div>
 
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Environment</div><div class="card-desc">The <code>environment</code> entries of the compose file. Saving rewrites the file; comments in it are lost.</div></div></div>
-  {% if env.is_empty() %}<div class="card-body"><p class="muted">The compose file sets no environment variables.</p></div>{% else %}
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>Service</th><th>Name</th><th>Value</th><th></th></tr></thead>
-    <tbody>
-    {% for e in env %}
-    <tr>
-      <td>{{ e.service }}</td>
-      <td class="mono">{{ e.key }}</td>
-      {% if let Some((name, set)) = e.placeholder %}
-      <td><span class="mono">{{ e.value }}</span> {% if set %}<span class="badge success plain">secret set</span>{% else %}<span class="badge destructive plain">secret missing</span>{% endif %}</td>
-      <td></td>
-      {% else %}
-      <form method="post" action="/apps/{{ app.id }}/env" autocomplete="off" id="env-{{ e.service }}-{{ e.key }}">
-      <td><input type="hidden" name="service" value="{{ e.service }}"><input type="hidden" name="key" value="{{ e.key }}"><input name="value" value="{{ e.value }}" class="mono"></td>
-      <td class="actions"><button class="btn btn-sm">Save</button><button class="btn btn-ghost btn-sm btn-danger" form="env-delete-{{ e.service }}-{{ e.key }}">Remove</button></td>
-      </form>
-      <form method="post" action="/apps/{{ app.id }}/env/delete" id="env-delete-{{ e.service }}-{{ e.key }}" data-confirm="Remove {{ e.key }} from {{ e.service }}?"><input type="hidden" name="service" value="{{ e.service }}"><input type="hidden" name="key" value="{{ e.key }}"></form>
+    <div class="section">
+      <div class="section-head">
+        <div><h3 class="section-title">Environment <span class="count">{{ s.env.len() }}</span></h3><p class="section-desc">Plain values from the compose file. Values that come from a secret are listed below.</p></div>
+        <div class="actions">
+          <details class="dialog">
+            <summary class="btn btn-sm btn-secondary">Edit</summary>
+            <div class="dialog-panel wide" role="dialog" aria-label="Edit environment of {{ s.name }}">
+              <form method="post" action="/apps/{{ app.id }}/env/bulk" autocomplete="off">
+                <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Environment of {{ s.name }}</h3></div>
+                <div class="dialog-body">
+                  <input type="hidden" name="service" value="{{ s.name }}">
+                  <label class="field"><span>One <code>KEY=value</code> per line</span><textarea name="env" rows="14" class="code" spellcheck="false" placeholder="LOG_LEVEL=info">{{ s.env_text }}</textarea></label>
+                  <p class="hint">Saving rewrites the compose file; comments in it are lost. Lines you remove are removed. Entries that read a secret (<code>${NAME}</code>) are not shown here and stay as they are.{% if s.secrets.len() > 0 %} Sensitive values belong in <a href="/apps/{{ app.id }}/secrets">Secrets</a>.{% endif %}</p>
+                </div>
+                <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Save</button></div></div>
+              </form>
+            </div>
+          </details>
+        </div>
+      </div>
+      {% if s.env.is_empty() %}<p class="muted">No plain variables.</p>{% else %}
+      <dl class="kv env">{% for e in s.env %}<dt>{{ e.key }}</dt><dd>{% if e.value.is_empty() %}<span class="faint">empty</span>{% else %}{{ e.value }}{% endif %}</dd>{% endfor %}</dl>
       {% endif %}
-    </tr>
-    {% endfor %}
-    <tr class="add-row">
-      <form method="post" action="/apps/{{ app.id }}/env" autocomplete="off">
-      <td><select name="service">{% for s in services %}<option>{{ s }}</option>{% endfor %}</select></td>
-      <td><input name="key" placeholder="LOG_LEVEL" pattern="[A-Za-z_][A-Za-z0-9_]*" required class="mono"></td>
-      <td><input name="value" placeholder="value" class="mono"></td>
-      <td class="actions"><button class="btn btn-sm">Add</button></td>
-      </form>
-    </tr>
-    </tbody>
-  </table></div></div>
-  {% endif %}
-</div>
+    </div>
 
-<div class="grid-2">
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Internet access</div><div class="card-desc">Outgoing connections from the app network. Other apps are never reachable.</div></div></div>
-  <div class="card-body">
-    <form method="post" action="/apps/{{ app.id }}/egress" class="form-row" id="egress-form">
-      <label class="field fixed" style="width:180px"><span>Mode</span>
-        <select name="mode" id="egress-mode">
-          <option value="all"{% if app.egress_mode == "all" %} selected{% endif %}>all</option>
-          <option value="none"{% if app.egress_mode == "none" %} selected{% endif %}>none</option>
-          <option value="ports"{% if app.egress_mode == "ports" %} selected{% endif %}>only TCP ports</option>
-        </select>
-      </label>
-      <label class="field grow" id="egress-ports-field"{% if app.egress_mode != "ports" %} hidden{% endif %}><span>Ports</span><input name="ports" id="egress-ports" placeholder="443, 587" value="{{ app.egress_ports }}" class="mono"></label>
-      <div class="field fixed"><button class="btn">Save</button></div>
-    </form>
+    <div class="section">
+      <div class="section-head">
+        <div><h3 class="section-title">Secrets <span class="count">{{ s.secrets.len() }}</span></h3><p class="section-desc">Every secret that reaches {{ s.name }} arrives as an environment variable of the same name.</p></div>
+        <div class="actions"><a class="btn btn-sm btn-secondary" href="/apps/{{ app.id }}/secrets">Manage secrets</a></div>
+      </div>
+      {% if !s.env_secrets.is_empty() %}
+      <h4 class="sublabel">Used in the compose file</h4>
+      <dl class="kv env">{% for e in s.env_secrets %}<dt>{{ e.key }}</dt><dd>{{ e.value }} {% if let Some((_, set)) = e.placeholder %}{% if set %}<span class="badge success plain">set</span>{% else %}<span class="badge destructive plain">missing</span>{% endif %}{% endif %}</dd>{% endfor %}</dl>
+      {% endif %}
+      {% if s.secrets.is_empty() %}<p class="muted{% if !s.env_secrets.is_empty() %} mt-2{% endif %}">No secret reaches this service.</p>{% else %}
+      <h4 class="sublabel mt">All secrets {{ s.name }} receives</h4>
+      <div class="chips">{% for k in s.secrets %}<span class="chip mono">{{ k }}</span>{% endfor %}</div>
+      {% endif %}
+    </div>
+
+    <div class="section">
+      <div class="section-head"><div><h3 class="section-title">Routes</h3></div><div class="actions"><a class="btn btn-sm btn-secondary" href="/apps/{{ app.id }}/network">Manage</a></div></div>
+      {% if s.routes.is_empty() %}<p class="muted">No route points at {{ s.name }}; only the other services of the app reach it.</p>{% else %}
+      <div class="rows">{% for r in s.routes %}<div class="row-item"><div class="row-main"><div class="row-title"><a href="https://{{ r.host }}" target="_blank" rel="noopener">{{ r.host }}</a></div><div class="row-sub">port {{ r.port }}</div></div><span class="badge {{ r.expose }}">{{ r.expose }}</span></div>{% endfor %}</div>
+      {% endif %}
+    </div>
+
+    {% if !s.hints.is_empty() %}
+    <details class="disclosure">
+      <summary>Hardening suggestions <span class="hint">{{ s.hints.len() }}</span></summary>
+      <div class="content"><ul class="bullets">{% for h in s.hints %}<li>{{ h }}</li>{% endfor %}</ul></div>
+    </details>
+    {% endif %}
+  {% endif %}{% endfor %}
   </div>
 </div>
+{% endif %}
+{% endif %}
 
-{% if backup_enabled %}
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Backup</div></div></div>
-  <div class="card-body">
-    <form method="post" action="/apps/{{ app.id }}/backup" class="switch-row">
-      <input type="hidden" name="value" value="{% if app.backup %}off{% else %}on{% endif %}">
-      <button class="switch" role="switch" aria-checked="{% if app.backup %}true{% else %}false{% endif %}"></button>
-      <div class="text"><b>{% if app.backup %}In the nightly backup{% else %}Not backed up{% endif %}</b><span>Volumes, files and database dumps of this app.</span></div>
-    </form>
-    <details class="disclosure danger" style="margin-top:16px">
-      <summary>Restore from a snapshot</summary>
-      <div class="content">
-      {% if snapshots.is_empty() %}<p class="muted">No snapshot list yet. Refresh it on the <a href="/server/backups">Backups</a> page.</p>{% else %}
-      <form method="post" action="/apps/{{ app.id }}/restore" class="form-row">
-        <label class="field grow"><span>Snapshot</span><select name="snapshot">{% for s in snapshots %}<option value="{{ s.id }}">{{ s.time }} · {{ s.id }}</option>{% endfor %}</select></label>
-        <label class="field"><span>Type <code>{{ app.name }}</code> to confirm</span><input name="confirm" required autocomplete="off" class="confirm-input"></label>
-        <div class="field fixed"><button class="btn btn-destructive">Restore</button></div>
-      </form>
-      <p class="muted small" style="margin-top:10px">Stops the app, replaces its data with the snapshot's, starts it again.</p>
-      {% endif %}
+{# ================= Logs ================= #}
+{% if tab == "logs" %}
+{% if services.is_empty() %}<div class="empty"><b>No services</b>The compose file defines none.</div>{% else %}
+<div class="toolbar">
+  <div class="pills">{% for s in service_views %}<a class="pill{% if s.name == service %} active{% endif %}" href="/apps/{{ app.id }}/logs?service={{ s.name }}&amp;tail={{ tail }}"><span class="dot {{ s.state_class }}"></span>{{ s.name }}</a>{% endfor %}</div>
+  <div class="spacer"></div>
+  <form method="get" action="/apps/{{ app.id }}/logs" class="row">
+    <input type="hidden" name="service" value="{{ service }}">
+    <label class="sr-only" for="tail">Lines</label>
+    <select name="tail" id="tail" class="w-sm">{% for n in [100, 200, 500, 1000, 5000] %}<option value="{{ n }}"{% if *n == tail %} selected{% endif %}>last {{ n }} lines</option>{% endfor %}</select>
+    <button class="btn btn-secondary">Reload</button>
+    <button type="button" class="btn btn-secondary live-toggle" id="log-live" aria-pressed="false" hidden><span class="live-dot"></span>Live</button>
+  </form>
+</div>
+<div class="log-wrap">
+  <pre class="log tall" id="log" data-src="/apps/{{ app.id }}/logs.txt?service={{ service }}&amp;tail={{ tail }}">{{ log }}</pre>
+  <button type="button" class="btn btn-sm btn-primary log-jump" id="log-jump" hidden>Jump to latest ↓</button>
+</div>
+<p class="hint mt-1" id="log-status">Newest lines at the bottom.</p>
+{% endif %}
+{% endif %}
+
+{# ================= Secrets ================= #}
+{% if tab == "secrets" %}
+<div class="section-head">
+  <div><h2 class="section-title">Secrets <span class="count">{{ secrets.len() }}</span></h2><p class="section-desc">Stored encrypted and never shown again. Each one reaches the services you choose as an environment variable and fills <code>${NAME}</code> in the compose file.</p></div>
+  <div class="actions">
+    <details class="dialog">
+      <summary class="btn btn-sm btn-secondary">Import .env</summary>
+      <div class="dialog-panel wide" role="dialog" aria-label="Import secrets">
+        <form method="post" action="/apps/{{ app.id }}/secrets/import" autocomplete="off">
+          <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Import secrets</h3></div>
+          <div class="dialog-body">
+            <label class="field"><span>Paste <code>KEY=value</code> lines <span class="hint">existing secrets get the new value</span></span><textarea name="env" rows="10" class="secret multi" spellcheck="false" required placeholder="STRIPE_SECRET_KEY=sk_live_…&#10;STRIPE_WEBHOOK_SECRET=whsec_…" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+            <div class="field"><span>Reaches</span><div class="checks">{% for svc in services %}<label class="check"><input type="checkbox" name="svc_{{ svc }}" value="on" checked> {{ svc }}</label>{% endfor %}</div></div>
+          </div>
+          <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Import</button></div></div>
+        </form>
+      </div>
+    </details>
+    <details class="dialog">
+      <summary class="btn btn-sm btn-primary">Add secret</summary>
+      <div class="dialog-panel" role="dialog" aria-label="Add a secret">
+        <form method="post" action="/apps/{{ app.id }}/secrets" autocomplete="off">
+          <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Add a secret</h3></div>
+          <div class="dialog-body">
+            <label class="field"><span>Name</span><input name="key" placeholder="DATABASE_URL" pattern="[A-Za-z_][A-Za-z0-9_]*" required autocomplete="off" spellcheck="false" class="mono" data-1p-ignore data-lpignore="true" data-bwignore></label>
+            <label class="field"><span>Value</span><textarea name="value" class="secret" rows="1" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+            <div class="field"><span>Reaches</span><div class="checks">{% for svc in services %}<label class="check"><input type="checkbox" name="svc_{{ svc }}" value="on" checked> {{ svc }}</label>{% endfor %}</div></div>
+          </div>
+          <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Add</button></div></div>
+        </form>
       </div>
     </details>
   </div>
 </div>
-{% endif %}
-</div>
 
-<div class="card danger">
-  <div class="card-head"><div><div class="card-title">Remove app</div><div class="card-desc">Containers, routes and secrets are deleted. Volumes only when you say so.</div></div></div>
-  <div class="card-body">
-    <form method="post" action="/apps/{{ app.id }}/remove" class="form-row">
-      <label class="field"><span>Type <code>{{ app.name }}</code> to confirm</span><input name="confirm" required autocomplete="off" class="confirm-input"></label>
-      <div class="field fixed" style="height:36px;justify-content:center"><label class="check"><input type="checkbox" name="volumes" value="yes"> also delete its volumes</label></div>
-      <div class="field fixed"><button class="btn btn-destructive">Remove</button></div>
-    </form>
+{% if !missing.is_empty() %}
+<div class="group mt-3">
+  <div class="group-title text-warning">Missing <span class="n">{{ missing.len() }}</span></div>
+  <div class="rows">
+    {% for m in missing %}
+    <div class="row-item missing">
+      <div class="row-main"><div class="row-title mono">{{ m }}</div><div class="row-sub">Used in the compose file, no value set</div></div>
+      <div class="row-actions">
+        <details class="dialog">
+          <summary class="btn btn-sm btn-primary">Set value</summary>
+          <div class="dialog-panel" role="dialog" aria-label="Set {{ m }}">
+            <form method="post" action="/apps/{{ app.id }}/secrets" autocomplete="off">
+              <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>{{ m }}</h3></div>
+              <div class="dialog-body">
+                <input type="hidden" name="key" value="{{ m }}">
+                <label class="field"><span>Value</span><textarea name="value" class="secret" rows="1" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+                <div class="field"><span>Reaches</span><div class="checks">{% for svc in services %}<label class="check"><input type="checkbox" name="svc_{{ svc }}" value="on" checked> {{ svc }}</label>{% endfor %}</div></div>
+              </div>
+              <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Save</button></div></div>
+            </form>
+          </div>
+        </details>
+      </div>
+    </div>
+    {% endfor %}
   </div>
 </div>
+{% endif %}
+
+{% if secrets.is_empty() %}
+<div class="empty mt-3"><b>No secrets yet</b>Add one, or import a whole <code>.env</code> file at once.</div>
+{% else %}
+<div class="toolbar mt-3">
+  <input type="search" id="secret-search" class="search" placeholder="Search {{ secrets.len() }} secrets" autocomplete="off" spellcheck="false">
+  {% if services.len() > 1 %}<label class="sr-only" for="secret-service">Service</label><select id="secret-service"><option value="">All services</option>{% for svc in services %}<option value="{{ svc }}">Reaches {{ svc }}</option>{% endfor %}</select>{% endif %}
+</div>
+{% for g in secret_groups %}
+<div class="group" data-secret-group>
+  <div class="group-title">{{ g.name }} <span class="n">{{ g.secrets.len() }}</span></div>
+  <div class="rows">
+    {% for s in g.secrets %}
+    <div class="row-item" data-secret="{{ s.key }}" data-services="{{ s.services.join(",") }}">
+      <div class="row-main">
+        <div class="row-title mono">{{ s.key }}{% if s.changed %} <span class="badge warning plain">not deployed</span>{% endif %}</div>
+        <div class="row-sub">{% if s.services.is_empty() %}All services{% else %}{% for svc in s.services %}<span class="chip">{{ svc }}</span>{% endfor %}{% endif %}</div>
+      </div>
+      <div class="row-side">{{ s.updated }}</div>
+      <div class="row-actions">
+        <details class="dialog">
+          <summary class="btn btn-sm btn-secondary">Edit</summary>
+          <div class="dialog-panel" role="dialog" aria-label="Edit {{ s.key }}">
+            <form method="post" action="/apps/{{ app.id }}/secrets" autocomplete="off">
+              <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>{{ s.key }}</h3></div>
+              <div class="dialog-body">
+                <input type="hidden" name="key" value="{{ s.key }}">
+                <label class="field"><span>New value <span class="hint">leave empty to keep the current one</span></span><textarea name="value" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+                <div class="field"><span>Reaches</span><div class="checks">{% for svc in services %}<label class="check"><input type="checkbox" name="svc_{{ svc }}" value="on"{% if s.services.is_empty() || s.services.contains(svc) %} checked{% endif %}> {{ svc }}</label>{% endfor %}</div></div>
+                <p class="hint">Updated {{ s.updated }}. Changes reach the containers with the next deploy or apply.</p>
+              </div>
+              <div class="dialog-foot"><button class="btn btn-ghost text-danger" form="secret-delete-{{ s.key }}">Remove</button><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Save</button></div></div>
+            </form>
+            <form method="post" action="/apps/{{ app.id }}/secrets/delete" id="secret-delete-{{ s.key }}" data-confirm="Remove secret {{ s.key }}?"><input type="hidden" name="key" value="{{ s.key }}"></form>
+          </div>
+        </details>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+<div class="empty" id="secret-none" hidden><b>No match</b>No secret matches the filter.</div>
+{% endif %}
+{% endif %}
+
+{# ================= Network ================= #}
+{% if tab == "network" %}
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Routes</h2><p class="section-desc">Hosts on {{ domains.join(", ") }} or one label below. Internal routes resolve only through the VPN.</p></div>
+    <div class="actions">
+      <details class="dialog">
+        <summary class="btn btn-sm btn-primary">Add route</summary>
+        <div class="dialog-panel" role="dialog" aria-label="Add a route">
+          <form method="post" action="/apps/{{ app.id }}/routes" id="route-form">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Add a route</h3></div>
+            <div class="dialog-body">
+              <label class="field"><span>Host</span><input name="host" id="route-host" placeholder="shop.{{ domains[0] }}" required class="mono"{% if let Some(h) = suggest %} value="{{ h.host }}" data-suggested="{{ h.host }}"{% endif %}></label>
+              <div class="form-grid">
+                <label class="field"><span>Service</span><select name="service" id="route-service">{% for h in hints %}<option value="{{ h.name }}" data-port="{{ h.port }}" data-host="{{ h.host }}"{% if let Some(sg) = suggest %}{% if sg.name == h.name %} selected{% endif %}{% endif %}>{{ h.name }}</option>{% endfor %}</select></label>
+                <label class="field"><span>Container port</span><input name="port" id="route-port" type="number" min="1" max="65535" value="{% if let Some(h) = suggest %}{{ h.port }}{% else %}80{% endif %}" required></label>
+              </div>
+              <div class="field"><span>Exposure</span>
+                <label class="check-card"><input type="radio" name="expose" value="public" checked><span class="text"><b>Public</b><span>Anyone on the internet, through the firewall</span></span></label>
+                <label class="check-card"><input type="radio" name="expose" value="internal"><span class="text"><b>Internal</b><span>Only devices on the VPN</span></span></label>
+              </div>
+              <div class="field"><span>For public routes</span><div class="checks"><label class="check"><input type="checkbox" name="waf" value="on" checked> Web application firewall</label><label class="check"><input type="checkbox" name="headers" value="on" checked> Security headers</label></div></div>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Add route</button></div></div>
+          </form>
+        </div>
+      </details>
+    </div>
+  </div>
+  {% if !waf_available %}<div class="alert warn compact"><div class="body">The installed Caddy has no WAF module; public routes run without it. Upgrade pocketcloud on the <a href="/server">Server</a> page.</div></div>{% endif %}
+  {% if routes.is_empty() %}<div class="empty"><b>No routes yet</b>Nothing outside the app's own network can reach it.</div>{% else %}
+  <div class="rows">
+    {% for r in routes %}
+    <div class="row-item">
+      <div class="row-main">
+        <div class="row-title"><a href="https://{{ r.host }}" target="_blank" rel="noopener">{{ r.host }}</a></div>
+        <div class="row-sub">to <span class="mono">{{ r.service }}:{{ r.port }}</span>{% if r.expose == "public" %}<span class="faint">·</span>{% if r.waf %}WAF on{% else %}<span class="text-warning">WAF off</span>{% endif %}<span class="faint">·</span>{% if r.headers %}security headers{% else %}<span class="text-warning">no security headers</span>{% endif %}{% endif %}</div>
+      </div>
+      <span class="badge {{ r.expose }}">{{ r.expose }}</span>
+      <div class="row-actions">
+        <details class="dialog">
+          <summary class="btn btn-sm btn-secondary">Edit</summary>
+          <div class="dialog-panel" role="dialog" aria-label="Route {{ r.host }}">
+            <form method="post" action="/apps/{{ app.id }}/routes/{{ r.id }}/update">
+              <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>{{ r.host }}</h3></div>
+              <div class="dialog-body">
+                <dl class="kv"><dt>Target</dt><dd class="mono">{{ r.service }}:{{ r.port }}</dd><dt>Exposure</dt><dd>{{ r.expose }}</dd></dl>
+                {% if r.expose == "public" %}
+                <label class="check-card"><input type="checkbox" name="waf" value="on"{% if r.waf %} checked{% endif %}><span class="text"><b>Web application firewall</b><span>Coraza with the OWASP Core Rule Set inspects every request.</span></span></label>
+                <label class="check-card"><input type="checkbox" name="headers" value="on"{% if r.headers %} checked{% endif %}><span class="text"><b>Security headers</b><span>HSTS, nosniff, frame and referrer policies.</span></span></label>
+                {% else %}<p class="hint">Internal routes are reachable only through the VPN and have nothing to switch. To change the target, remove the route and add it again.</p>{% endif %}
+              </div>
+              <div class="dialog-foot"><button class="btn btn-ghost text-danger" form="route-delete-{{ r.id }}">Remove route</button>{% if r.expose == "public" %}<div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Save</button></div>{% endif %}</div>
+            </form>
+            <form method="post" action="/apps/{{ app.id }}/routes/{{ r.id }}/delete" id="route-delete-{{ r.id }}" data-confirm="Remove route {{ r.host }}?"></form>
+          </div>
+        </details>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Internet access</h2><p class="section-desc">Outgoing connections from the app's containers. Other apps are never reachable.</p></div>
+    <div class="actions">
+      <details class="dialog">
+        <summary class="btn btn-sm btn-secondary">Edit</summary>
+        <div class="dialog-panel" role="dialog" aria-label="Internet access">
+          <form method="post" action="/apps/{{ app.id }}/egress" id="egress-form">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Internet access</h3></div>
+            <div class="dialog-body">
+              <label class="field"><span>Outgoing connections</span>
+                <select name="mode" id="egress-mode">
+                  <option value="all"{% if app.egress_mode == "all" %} selected{% endif %}>Allow all</option>
+                  <option value="none"{% if app.egress_mode == "none" %} selected{% endif %}>Block all</option>
+                  <option value="ports"{% if app.egress_mode == "ports" %} selected{% endif %}>Only some TCP ports</option>
+                </select>
+              </label>
+              <label class="field" id="egress-ports-field"{% if app.egress_mode != "ports" %} hidden{% endif %}><span>TCP ports</span><input name="ports" id="egress-ports" placeholder="443, 587" value="{{ app.egress_ports }}" class="mono"></label>
+              <p class="hint">Applied to the firewall right away.</p>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Save</button></div></div>
+          </form>
+        </div>
+      </details>
+    </div>
+  </div>
+  <dl class="kv">
+    <dt>Outgoing</dt><dd>{% if app.egress_mode == "all" %}All destinations allowed{% else if app.egress_mode == "none" %}Blocked{% else %}Only TCP ports <span class="mono">{{ app.egress_ports }}</span>{% endif %}</dd>
+    <dt>App network</dt><dd class="mono">{{ app.subnet }}</dd>
+  </dl>
 </div>
 {% endif %}
 
-{% if tab == "history" %}
-<div class="stack">
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Deployments</div></div></div>
-  {% if releases.is_empty() %}<div class="card-body"><p class="muted">Not deployed yet.</p></div>{% else %}
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>#</th><th>Outcome</th><th>Images</th><th>Scan</th><th class="right">When</th></tr></thead>
-    <tbody>
+{# ================= Deployments ================= #}
+{% if tab == "deployments" %}
+<div class="section">
+  <div class="section-head"><div><h2 class="section-title">Deployments</h2><p class="section-desc">The last ten releases. A failed deploy rolls back to the one before. App created {{ app.created }}.</p></div></div>
+  {% if releases.is_empty() %}<div class="empty"><b>Not deployed yet</b>Deploy pulls the images and starts every service.</div>{% else %}
+  <ol class="timeline">
     {% for r in releases %}
-    <tr>
-      <td class="num muted">{{ r.id }}</td>
-      <td><span class="badge {{ r.outcome }}">{{ r.outcome }}</span></td>
-      <td class="mono small wrap lines">{% for i in r.images %}<div>{{ i }}</div>{% endfor %}</td>
-      <td>{% if !r.scan.is_empty() %}<span class="badge plain {% if r.scan_bad %}destructive{% else %}success{% endif %}">{{ r.scan }}</span>{% if !r.findings.is_empty() %}<details class="inline-details"><summary>critical findings</summary><div class="small lines">{% for f in r.findings %}<div>{{ f }}</div>{% endfor %}</div></details>{% endif %}{% else %}<span class="muted">–</span>{% endif %}</td>
-      <td class="time right">{{ r.created }}</td>
-    </tr>
+    <li>
+      <span class="dot {% if r.outcome == "deployed" %}ok{% else if r.outcome == "failed" %}bad{% else %}warn{% endif %}"></span>
+      <div class="t-head">Release #{{ r.id }} <span class="badge {{ r.outcome }}">{{ r.outcome }}</span>{% if !r.scan.is_empty() %}<span class="badge plain {% if r.scan_bad %}destructive{% else %}secondary{% endif %}">{{ r.scan }}</span>{% endif %}<span class="spacer"></span><span class="muted small">{{ r.created }}</span></div>
+      <div class="t-body mono xs lines">{% for i in r.images %}<div>{{ i }}</div>{% endfor %}</div>
+      {% if !r.findings.is_empty() %}<details class="inline-details mt-1"><summary>critical findings</summary><div class="small lines">{% for f in r.findings %}<div>{{ f }}</div>{% endfor %}</div></details>{% endif %}
+    </li>
     {% endfor %}
-    </tbody>
-  </table></div></div>
+  </ol>
   {% endif %}
+</div>
+<div class="section">
+  <div class="section-head"><div><h2 class="section-title">Jobs</h2><p class="section-desc">Deploys, scans, restores and their logs.</p></div></div>
+  {% if jobs.is_empty() %}<p class="muted">No jobs yet.</p>{% else %}
+  <div class="rows">
+    {% for j in jobs %}<a class="row-item" href="/jobs/{{ j.id }}"><div class="row-main"><div class="row-title">{{ j.kind }} <span class="faint">#{{ j.id }}</span></div></div><span class="badge {{ j.status }}">{{ j.status }}</span><div class="row-side">{{ j.created }}</div></a>{% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ================= Settings ================= #}
+{% if tab == "settings" %}
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Compose file</h2><p class="section-desc">Published ports are removed and every service gets a static address in the app network. Saving does not deploy.</p></div>
+    <div class="actions"><a class="btn btn-sm btn-secondary" href="/apps/{{ app.id }}/edit">Edit</a></div>
+  </div>
+  <pre class="code">{{ compose }}</pre>
 </div>
 
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Jobs</div></div></div>
-  {% if jobs.is_empty() %}<div class="card-body"><p class="muted">No jobs yet.</p></div>{% else %}
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>Job</th><th>Status</th><th class="right">Started</th></tr></thead>
-    <tbody>
-    {% for j in jobs %}
-    <tr><td><a href="/jobs/{{ j.id }}">{{ j.kind }} <span class="muted">#{{ j.id }}</span></a></td><td><span class="badge {{ j.status }}">{{ j.status }}</span></td><td class="time right">{{ j.created }}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table></div></div>
-  {% endif %}
+<div class="section">
+  <div class="section-head"><div><h2 class="section-title">Backup</h2></div></div>
+  {% if backup_enabled %}
+  <form method="post" action="/apps/{{ app.id }}/backup" class="switch-row">
+    <div class="text"><b>{% if app.backup %}Included in the nightly backup{% else %}Not backed up{% endif %}</b><span>Volumes, files and database dumps of this app.</span></div>
+    <input type="hidden" name="value" value="{% if app.backup %}off{% else %}on{% endif %}">
+    <button class="switch" role="switch" aria-checked="{% if app.backup %}true{% else %}false{% endif %}" aria-label="Include in backups"></button>
+  </form>
+  <div class="row mt-3">
+    <details class="dialog">
+      <summary class="btn btn-sm btn-secondary">Restore from a snapshot…</summary>
+      <div class="dialog-panel" role="dialog" aria-label="Restore {{ app.name }}">
+        <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Restore {{ app.name }}</h3></div>
+        {% if snapshots.is_empty() %}<div class="dialog-body"><p class="muted">No snapshot list yet. Refresh it on the <a href="/server/backups">Backups</a> page.</p></div>{% else %}
+        <form method="post" action="/apps/{{ app.id }}/restore">
+          <div class="dialog-body">
+            <p>Stops the app, replaces its data with the snapshot's and starts it again.</p>
+            <label class="field"><span>Snapshot</span><select name="snapshot">{% for s in snapshots %}<option value="{{ s.id }}">{{ s.time }} · {{ s.id }}</option>{% endfor %}</select></label>
+            <label class="field"><span>Type <code>{{ app.name }}</code> to confirm</span><input name="confirm" required autocomplete="off"></label>
+          </div>
+          <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-destructive">Restore</button></div></div>
+        </form>
+        {% endif %}
+      </div>
+    </details>
+  </div>
+  {% else %}<p class="muted">Backups are not set up for this server. <a class="btn-link" href="/server/backups">Set them up</a></p>{% endif %}
 </div>
+
+<div class="section">
+  <div class="section-head"><div><h2 class="section-title text-danger">Remove app</h2><p class="section-desc">Containers, routes and secrets are deleted. Volumes only when you say so.</p></div>
+    <div class="actions">
+      <details class="dialog">
+        <summary class="btn btn-sm btn-danger">Remove {{ app.name }}…</summary>
+        <div class="dialog-panel" role="dialog" aria-label="Remove {{ app.name }}">
+          <form method="post" action="/apps/{{ app.id }}/remove">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Remove {{ app.name }}</h3></div>
+            <div class="dialog-body">
+              <p>Containers, routes and secrets of {{ app.name }} are deleted. This cannot be undone.</p>
+              <label class="check-card"><input type="checkbox" name="volumes" value="yes"><span class="text"><b>Also delete its volumes</b><span>The app's data is gone for good, except in backups.</span></span></label>
+              <label class="field"><span>Type <code>{{ app.name }}</code> to confirm</span><input name="confirm" required autocomplete="off"></label>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-destructive">Remove</button></div></div>
+          </form>
+        </div>
+      </details>
+    </div>
+  </div>
 </div>
 {% endif %}
 {% endblock %}

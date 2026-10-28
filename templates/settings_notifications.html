@@ -1,69 +1,104 @@
 {% extends "layout.html" %}
 {% block content %}
 <div class="page-head">
-  <div><h1>Settings</h1><p class="desc">{% if notify_configured %}Sending by {{ channels }}{% if !notify_last.is_empty() %} · last sent {{ notify_last }}{% endif %}{% else %}No channel configured yet.{% endif %}{% if !heartbeat.is_empty() %} · heartbeat {{ heartbeat }}{% endif %}</p></div>
-  {% if notify_configured %}<div class="actions"><form method="post" action="/settings/notifications/test" class="inline"><button class="btn">Send test notification</button></form></div>{% endif %}
+  <div><h1>Settings</h1></div>
+  {% if notify_configured %}<div class="actions"><form method="post" action="/settings/notifications/test" class="inline"><button class="btn btn-secondary">Send test notification</button></form></div>{% endif %}
 </div>
 {% include "_tabs_settings.html" %}
-{% if !notify_error.is_empty() %}<div class="alert err"><div class="body"><div class="title">Last delivery failed</div>{{ notify_error }}</div></div>{% endif %}
-<div class="stack">
-<form method="post" action="/settings/notifications" autocomplete="off" class="stack">
-  <div class="card">
-    <div class="card-head"><div><div class="card-title">E-mail</div><div class="card-desc">On when recipients and an SMTP host are set; clear both to switch it off.</div></div></div>
-    <div class="card-body form-grid">
-      <label class="field span-2"><span>Recipients <span class="hint">comma-separated</span></span><input name="to" value="{{ notify.to }}" placeholder="you@example.com"></label>
-      <label class="field"><span>From</span><input name="from" value="{{ notify.from }}" placeholder="pocketcloud@example.com"></label>
-      <label class="field"><span>SMTP host</span><input name="smtp_host" value="{{ notify.smtp_host }}" placeholder="smtp.example.com" class="mono"></label>
-      <label class="field"><span>Port</span><input name="smtp_port" type="number" min="1" max="65535" value="{{ notify.smtp_port }}"></label>
-      <label class="field"><span>TLS</span><select name="smtp_tls"><option value="starttls"{% if notify.smtp_tls == "starttls" %} selected{% endif %}>STARTTLS</option><option value="implicit"{% if notify.smtp_tls == "implicit" %} selected{% endif %}>implicit TLS</option><option value="none"{% if notify.smtp_tls == "none" %} selected{% endif %}>none</option></select></label>
-      <label class="field"><span>SMTP user</span><input name="smtp_user" value="{{ notify.smtp_user }}"></label>
-      <label class="field"><span>SMTP password{% if notify.has_password %} <span class="hint">set; leave empty to keep</span>{% endif %}</span><textarea name="smtp_password" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-head"><div><div class="card-title">Webhook</div><div class="card-desc">Receives alerts and a stream of security events as JSON. Clear the URL to switch it off.</div></div></div>
-    <div class="card-body form-grid">
-      <label class="field span-2"><span>URL</span><input name="webhook_url" value="{{ notify.webhook_url }}" placeholder="https://example.com/hook" class="mono"></label>
-      <label class="field"><span>Bearer token{% if notify.has_webhook_token %} <span class="hint">set; leave empty to keep</span>{% endif %}</span><textarea name="webhook_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-head"><div><div class="card-title">Heartbeat</div><div class="card-desc">Pinged every five minutes while monitoring works. A dead man's switch service (healthchecks.io style, period 5 minutes) tells you when the pings stop, the one failure the server cannot report itself.</div></div></div>
-    <div class="card-body form-grid">
-      <label class="field span-2"><span>URL</span><input name="heartbeat_url" value="{{ notify.heartbeat_url }}" placeholder="https://hc-ping.com/…" class="mono"></label>
-    </div>
-    <div class="card-foot row end"><button class="btn btn-primary">Save channels</button></div>
-  </div>
-</form>
+{% if !notify_error.is_empty() %}<div class="alert err"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg><div class="body"><div class="title">Last delivery failed</div>{{ notify_error }}</div></div>{% endif %}
 
-<form method="post" action="/settings/notifications/thresholds" class="stack">
-  <div class="card">
-    <div class="card-head"><div><div class="card-title">Delivery</div><div class="card-desc">Internet background noise (WAF blocks, bans, ssh brute force) never leaves the interface. Alerts go out once a minute as one message, the same alert at most once an hour unless it turns critical.</div></div></div>
-    <div class="card-body form-grid">
-      <label class="field"><span>Send</span><select name="notify_min"><option value="warning"{% if t.notify_min == "warning" %} selected{% endif %}>warnings and criticals</option><option value="critical"{% if t.notify_min == "critical" %} selected{% endif %}>criticals only</option></select></label>
-      <label class="field"><span>Interface actions <span class="hint">VPN device, registry, WAF off, app removed, restore</span></span><select name="notify_admin_actions"><option value="true"{% if t.notify_admin_actions %} selected{% endif %}>send</option><option value="false"{% if !t.notify_admin_actions %} selected{% endif %}>don't send</option></select></label>
-      <label class="field"><span>Every ssh login</span><select name="notify_ssh_login"><option value="false"{% if !t.notify_ssh_login %} selected{% endif %}>don't send</option><option value="true"{% if t.notify_ssh_login %} selected{% endif %}>send</option></select></label>
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Channels</h2><p class="section-desc">{% if notify_configured %}Sending by {{ channels }}{% if !notify_last.is_empty() %}, last sent {{ notify_last }}{% endif %}.{% else %}No channel yet; alerts only show in the interface.{% endif %}</p></div>
+    <div class="actions">
+      <details class="dialog">
+        <summary class="btn btn-sm btn-secondary">Edit</summary>
+        <div class="dialog-panel wide" role="dialog" aria-label="Notification channels">
+          <form method="post" action="/settings/notifications" autocomplete="off">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Notification channels</h3></div>
+            <div class="dialog-body">
+              <div class="lead">E-mail</div>
+              <p class="hint">On when recipients and an SMTP host are set; clear both to switch it off.</p>
+              <div class="form-grid">
+                <label class="field span-all"><span>Recipients <span class="hint">comma-separated</span></span><input name="to" value="{{ notify.to }}" placeholder="you@example.com"></label>
+                <label class="field"><span>From</span><input name="from" value="{{ notify.from }}" placeholder="pocketcloud@example.com"></label>
+                <label class="field"><span>SMTP host</span><input name="smtp_host" value="{{ notify.smtp_host }}" placeholder="smtp.example.com" class="mono"></label>
+                <label class="field"><span>Port</span><input name="smtp_port" type="number" min="1" max="65535" value="{{ notify.smtp_port }}"></label>
+                <label class="field"><span>TLS</span><select name="smtp_tls"><option value="starttls"{% if notify.smtp_tls == "starttls" %} selected{% endif %}>STARTTLS</option><option value="implicit"{% if notify.smtp_tls == "implicit" %} selected{% endif %}>implicit TLS</option><option value="none"{% if notify.smtp_tls == "none" %} selected{% endif %}>none</option></select></label>
+                <label class="field"><span>SMTP user</span><input name="smtp_user" value="{{ notify.smtp_user }}"></label>
+                <label class="field"><span>SMTP password{% if notify.has_password %} <span class="hint">set; empty keeps it</span>{% endif %}</span><textarea name="smtp_password" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+              </div>
+              <div class="lead mt-2">Webhook</div>
+              <p class="hint">Receives alerts and a stream of security events as JSON. Clear the URL to switch it off.</p>
+              <div class="form-grid">
+                <label class="field span-2"><span>URL</span><input name="webhook_url" value="{{ notify.webhook_url }}" placeholder="https://example.com/hook" class="mono"></label>
+                <label class="field"><span>Bearer token{% if notify.has_webhook_token %} <span class="hint">set; empty keeps it</span>{% endif %}</span><textarea name="webhook_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+              </div>
+              <div class="lead mt-2">Heartbeat</div>
+              <p class="hint">Pinged every five minutes while monitoring works. A dead man's switch service (healthchecks.io style, period 5 minutes) tells you when the pings stop, the one failure the server cannot report itself.</p>
+              <label class="field"><span>URL</span><input name="heartbeat_url" value="{{ notify.heartbeat_url }}" placeholder="https://hc-ping.com/…" class="mono"></label>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Save channels</button></div></div>
+          </form>
+        </div>
+      </details>
     </div>
   </div>
-  <div class="card">
-    <div class="card-head"><div><div class="card-title">Thresholds</div></div></div>
-    <div class="card-body form-grid">
-      <label class="field"><span>Disk warning <span class="hint">%</span></span><input name="disk_warn" type="number" step="1" min="1" max="100" value="{{ t.disk_warn }}"></label>
-      <label class="field"><span>Disk critical <span class="hint">%</span></span><input name="disk_crit" type="number" step="1" min="1" max="100" value="{{ t.disk_crit }}"></label>
-      <label class="field"><span>Inodes warning <span class="hint">%</span></span><input name="inodes_warn" type="number" step="1" min="1" max="100" value="{{ t.inodes_warn }}"></label>
-      <label class="field"><span>Memory available warning <span class="hint">%</span></span><input name="mem_warn" type="number" step="1" min="0" max="100" value="{{ t.mem_warn }}"></label>
-      <label class="field"><span>Memory available critical <span class="hint">%</span></span><input name="mem_crit" type="number" step="1" min="0" max="100" value="{{ t.mem_crit }}"></label>
-      <label class="field"><span>CPU warning <span class="hint">%, 15 min</span></span><input name="cpu_warn" type="number" step="1" min="1" max="100" value="{{ t.cpu_warn }}"></label>
-      <label class="field"><span>Swap warning <span class="hint">%</span></span><input name="swap_warn" type="number" step="1" min="1" max="100" value="{{ t.swap_warn }}"></label>
-      <label class="field"><span>Failed ssh logins <span class="hint">per 10 min</span></span><input name="ssh_failed" type="number" min="1" value="{{ t.ssh_failed }}"></label>
-      <label class="field"><span>WAF blocks per client <span class="hint">per 10 min</span></span><input name="waf_blocks" type="number" min="1" value="{{ t.waf_blocks }}"></label>
-      <label class="field"><span>5xx per host <span class="hint">per 5 min</span></span><input name="http_5xx" type="number" min="1" value="{{ t.http_5xx }}"></label>
-      <label class="field"><span>Backup stale after <span class="hint">hours</span></span><input name="backup_stale_hours" type="number" min="1" value="{{ t.backup_stale_hours }}"></label>
-      <label class="field"><span>Reboot pending warning after <span class="hint">days</span></span><input name="reboot_days" type="number" min="0" value="{{ t.reboot_days }}"></label>
-      <label class="field"><span>Certificate expiry warning <span class="hint">days</span></span><input name="cert_days" type="number" min="1" value="{{ t.cert_days }}"></label>
+  <dl class="kv">
+    <dt>E-mail</dt><dd>{% if notify.to.is_empty() || notify.smtp_host.is_empty() %}<span class="muted">Off</span>{% else %}To {{ notify.to }} <span class="muted">via <span class="mono">{{ notify.smtp_host }}:{{ notify.smtp_port }}</span></span>{% endif %}</dd>
+    <dt>Webhook</dt><dd>{% if notify.webhook_url.is_empty() %}<span class="muted">Off</span>{% else %}<span class="mono">{{ notify.webhook_url }}</span>{% if notify.has_webhook_token %} <span class="muted">with a bearer token</span>{% endif %}{% endif %}</dd>
+    <dt>Heartbeat</dt><dd>{% if notify.heartbeat_url.is_empty() %}<span class="muted">Off</span>{% else %}<span class="mono">{{ notify.heartbeat_url }}</span>{% if !heartbeat.is_empty() %} <span class="muted">· {{ heartbeat }}</span>{% endif %}{% endif %}</dd>
+  </dl>
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">What gets sent</h2><p class="section-desc">Internet background noise (WAF blocks, bans, ssh brute force) never leaves the interface. Alerts go out once a minute as one message, the same alert at most once an hour unless it turns critical.</p></div>
+    <div class="actions">
+      <details class="dialog">
+        <summary class="btn btn-sm btn-secondary">Edit</summary>
+        <div class="dialog-panel wide" role="dialog" aria-label="Delivery and thresholds">
+          <form method="post" action="/settings/notifications/thresholds">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Delivery and thresholds</h3></div>
+            <div class="dialog-body">
+              <div class="form-grid">
+                <label class="field"><span>Send</span><select name="notify_min"><option value="warning"{% if t.notify_min == "warning" %} selected{% endif %}>warnings and criticals</option><option value="critical"{% if t.notify_min == "critical" %} selected{% endif %}>criticals only</option></select></label>
+                <label class="field"><span>Interface actions</span><select name="notify_admin_actions"><option value="true"{% if t.notify_admin_actions %} selected{% endif %}>send</option><option value="false"{% if !t.notify_admin_actions %} selected{% endif %}>don't send</option></select></label>
+                <label class="field"><span>Every ssh login</span><select name="notify_ssh_login"><option value="false"{% if !t.notify_ssh_login %} selected{% endif %}>don't send</option><option value="true"{% if t.notify_ssh_login %} selected{% endif %}>send</option></select></label>
+              </div>
+              <div class="lead mt-2">Thresholds</div>
+              <div class="form-grid">
+                <label class="field"><span>Disk warning <span class="hint">%</span></span><input name="disk_warn" type="number" step="1" min="1" max="100" value="{{ t.disk_warn }}"></label>
+                <label class="field"><span>Disk critical <span class="hint">%</span></span><input name="disk_crit" type="number" step="1" min="1" max="100" value="{{ t.disk_crit }}"></label>
+                <label class="field"><span>Inodes warning <span class="hint">%</span></span><input name="inodes_warn" type="number" step="1" min="1" max="100" value="{{ t.inodes_warn }}"></label>
+                <label class="field"><span>Memory free warning <span class="hint">%</span></span><input name="mem_warn" type="number" step="1" min="0" max="100" value="{{ t.mem_warn }}"></label>
+                <label class="field"><span>Memory free critical <span class="hint">%</span></span><input name="mem_crit" type="number" step="1" min="0" max="100" value="{{ t.mem_crit }}"></label>
+                <label class="field"><span>CPU warning <span class="hint">%, 15 min</span></span><input name="cpu_warn" type="number" step="1" min="1" max="100" value="{{ t.cpu_warn }}"></label>
+                <label class="field"><span>Swap warning <span class="hint">%</span></span><input name="swap_warn" type="number" step="1" min="1" max="100" value="{{ t.swap_warn }}"></label>
+                <label class="field"><span>Failed ssh logins <span class="hint">/10 min</span></span><input name="ssh_failed" type="number" min="1" value="{{ t.ssh_failed }}"></label>
+                <label class="field"><span>WAF blocks per client <span class="hint">/10 min</span></span><input name="waf_blocks" type="number" min="1" value="{{ t.waf_blocks }}"></label>
+                <label class="field"><span>5xx per host <span class="hint">/5 min</span></span><input name="http_5xx" type="number" min="1" value="{{ t.http_5xx }}"></label>
+                <label class="field"><span>Backup stale after <span class="hint">hours</span></span><input name="backup_stale_hours" type="number" min="1" value="{{ t.backup_stale_hours }}"></label>
+                <label class="field"><span>Reboot pending after <span class="hint">days</span></span><input name="reboot_days" type="number" min="0" value="{{ t.reboot_days }}"></label>
+                <label class="field"><span>Certificate expiry <span class="hint">days</span></span><input name="cert_days" type="number" min="1" value="{{ t.cert_days }}"></label>
+              </div>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Save</button></div></div>
+          </form>
+        </div>
+      </details>
     </div>
-    <div class="card-foot row end"><button class="btn btn-primary">Save thresholds</button></div>
   </div>
-</form>
+  <dl class="kv">
+    <dt>Severity</dt><dd>{% if t.notify_min == "critical" %}Criticals only{% else %}Warnings and criticals{% endif %}</dd>
+    <dt>Interface actions</dt><dd>{% if t.notify_admin_actions %}Sent{% else %}Not sent{% endif %} <span class="muted">· VPN device, registry, WAF off, app removed, restore</span></dd>
+    <dt>ssh logins</dt><dd>{% if t.notify_ssh_login %}Every login is sent{% else %}Not sent{% endif %}</dd>
+    <dt>Disk</dt><dd>warning at {{ t.disk_warn }} %, critical at {{ t.disk_crit }} % <span class="muted">· inodes {{ t.inodes_warn }} %</span></dd>
+    <dt>Memory free</dt><dd>warning below {{ t.mem_warn }} %, critical below {{ t.mem_crit }} % <span class="muted">· swap {{ t.swap_warn }} %</span></dd>
+    <dt>CPU</dt><dd>warning at {{ t.cpu_warn }} % over 15 min</dd>
+    <dt>Attacks</dt><dd>{{ t.ssh_failed }} failed ssh logins or {{ t.waf_blocks }} WAF blocks per client in 10 min</dd>
+    <dt>Errors</dt><dd>{{ t.http_5xx }} responses 5xx per host in 5 min</dd>
+    <dt>Housekeeping</dt><dd>backup older than {{ t.backup_stale_hours }} h, reboot pending {{ t.reboot_days }} days, certificate expiring in {{ t.cert_days }} days</dd>
+  </dl>
 </div>
 {% endblock %}

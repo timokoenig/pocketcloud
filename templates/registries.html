@@ -1,29 +1,34 @@
 {% extends "layout.html" %}
 {% block content %}
-<div class="page-head">
-  <div><h1>Settings</h1><p class="desc">Registries</p></div>
-</div>
+<div class="page-head"><div><h1>Settings</h1></div></div>
 {% include "_tabs_settings.html" %}
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Registry credentials</div><div class="card-desc">Used for every image pull, stored sealed. For ghcr.io use a classic personal access token with <code>read:packages</code>.</div></div></div>
-  {% if !registries.is_empty() %}
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>Registry</th><th>Username</th><th class="right">Updated</th><th></th></tr></thead>
-    <tbody>
-    {% for r in registries %}
-    <tr><td class="mono"><strong>{{ r.host }}</strong></td><td>{{ r.username }}</td><td class="time right">{{ r.updated }}</td>
-    <td class="actions"><form method="post" action="/settings/registries/{{ r.id }}/delete" class="inline" data-confirm="Remove credentials for {{ r.host }}?"><button class="btn btn-ghost btn-sm btn-danger">Remove</button></form></td></tr>
-    {% endfor %}
-    </tbody>
-  </table></div></div>
-  {% else %}<div class="card-body"><p class="muted">No credentials yet; public images pull without them.</p></div>{% endif %}
-  <div class="card-foot">
-    <form method="post" action="/settings/registries" class="form-row" autocomplete="off">
-      <label class="field"><span>Registry</span><input name="host" placeholder="ghcr.io" required class="mono"></label>
-      <label class="field"><span>Username</span><input name="username" required></label>
-      <label class="field grow"><span>Token</span><textarea name="password" class="secret" rows="1" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
-      <div class="field fixed"><button class="btn btn-primary">Save</button></div>
-    </form>
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Registry credentials <span class="count">{{ registries.len() }}</span></h2><p class="section-desc">Used for every image pull, stored sealed. For ghcr.io use a classic personal access token with <code>read:packages</code>.</p></div>
+    <div class="actions">
+      <details class="dialog">
+        <summary class="btn btn-sm btn-primary">Add registry</summary>
+        <div class="dialog-panel" role="dialog" aria-label="Registry credentials">
+          <form method="post" action="/settings/registries" autocomplete="off">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Registry credentials</h3></div>
+            <div class="dialog-body">
+              <label class="field"><span>Registry</span><input name="host" placeholder="ghcr.io" required class="mono"></label>
+              <label class="field"><span>Username</span><input name="username" required></label>
+              <label class="field"><span>Token</span><textarea name="password" class="secret" rows="1" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
+              <p class="hint">Saving credentials for a registry that already has some replaces them.</p>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Save</button></div></div>
+          </form>
+        </div>
+      </details>
+    </div>
   </div>
+  {% if registries.is_empty() %}<div class="empty"><b>No credentials yet</b>Public images pull without them.</div>{% else %}
+  <div class="rows">
+    {% for r in registries %}
+    <div class="row-item"><div class="row-main"><div class="row-title mono">{{ r.host }}</div><div class="row-sub">as {{ r.username }}</div></div><div class="row-side">updated {{ r.updated }}</div><div class="row-actions"><form method="post" action="/settings/registries/{{ r.id }}/delete" class="inline" data-confirm="Remove credentials for {{ r.host }}?"><button class="btn btn-sm btn-ghost text-danger">Remove</button></form></div></div>
+    {% endfor %}
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

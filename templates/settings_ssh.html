@@ -1,27 +1,32 @@
 {% extends "layout.html" %}
 {% block content %}
-<div class="page-head">
-  <div><h1>Settings</h1><p class="desc">SSH keys</p></div>
-</div>
+<div class="page-head"><div><h1>Settings</h1></div></div>
 {% include "_tabs_settings.html" %}
-<div class="card">
-  <div class="card-head"><div><div class="card-title">Authorized keys</div><div class="card-desc">May log in as <code>{{ ssh_user }}</code> over the VPN. {% if ssh_managed %}Only the keys below are authorized.{% else %}The installer's key stays authorized until the first key is added here.{% endif %}</div></div></div>
-  {% if !ssh_keys.is_empty() %}
-  <div class="card-body flush"><div class="table-wrap"><table>
-    <thead><tr><th>Name</th><th>Key</th><th class="right">Added</th><th></th></tr></thead>
-    <tbody>
-    {% for k in ssh_keys %}
-    <tr><td><strong>{{ k.name }}</strong></td><td class="mono muted">{{ k.fingerprint }}</td><td class="time right">{{ k.created }}</td><td class="actions"><form method="post" action="/settings/ssh-keys/{{ k.id }}/delete" class="inline" data-confirm="Remove ssh key {{ k.name }}?"><button class="btn btn-ghost btn-sm btn-danger">Remove</button></form></td></tr>
-    {% endfor %}
-    </tbody>
-  </table></div></div>
-  {% else %}<div class="card-body"><p class="muted">No keys added yet.</p></div>{% endif %}
-  <div class="card-foot">
-    <form method="post" action="/settings/ssh-keys" autocomplete="off" class="form-row">
-      <label class="field"><span>Name</span><input name="name" placeholder="laptop" required class="w-sm"></label>
-      <label class="field grow"><span>Public key</span><input name="public_key" placeholder="ssh-ed25519 AAAA…" required autocomplete="off" spellcheck="false" class="mono"></label>
-      <div class="field fixed"><button class="btn btn-primary">Add</button></div>
-    </form>
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">SSH keys <span class="count">{{ ssh_keys.len() }}</span></h2><p class="section-desc">May log in as <code>{{ ssh_user }}</code> over the VPN. {% if ssh_managed %}Only the keys below are authorized.{% else %}The installer's key stays authorized until the first key is added here.{% endif %}</p></div>
+    <div class="actions">
+      <details class="dialog">
+        <summary class="btn btn-sm btn-primary">Add key</summary>
+        <div class="dialog-panel" role="dialog" aria-label="Add an ssh key">
+          <form method="post" action="/settings/ssh-keys" autocomplete="off">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Add an ssh key</h3></div>
+            <div class="dialog-body">
+              <label class="field"><span>Name</span><input name="name" placeholder="laptop" required></label>
+              <label class="field"><span>Public key</span><textarea name="public_key" rows="4" placeholder="ssh-ed25519 AAAA…" required autocomplete="off" spellcheck="false" class="code"></textarea></label>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Add</button></div></div>
+          </form>
+        </div>
+      </details>
+    </div>
   </div>
+  {% if ssh_keys.is_empty() %}<div class="empty"><b>No keys added yet</b>Add the public key of each device that should reach the server's shell.</div>{% else %}
+  <div class="rows">
+    {% for k in ssh_keys %}
+    <div class="row-item"><div class="row-main"><div class="row-title">{{ k.name }}</div><div class="row-sub mono break">{{ k.fingerprint }}</div></div><div class="row-side">added {{ k.created }}</div><div class="row-actions"><form method="post" action="/settings/ssh-keys/{{ k.id }}/delete" class="inline" data-confirm="Remove ssh key {{ k.name }}?"><button class="btn btn-sm btn-ghost text-danger">Remove</button></form></div></div>
+    {% endfor %}
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

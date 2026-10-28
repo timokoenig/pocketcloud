@@ -3,9 +3,9 @@
 {% block content %}
 <div class="crumbs">{% if let Some(a) = app_id %}<a href="/">Apps</a><span>/</span><a href="/apps/{{ a }}">{{ app_name }}</a>{% else %}<a href="/server">Server</a>{% endif %}<span>/</span><span>{{ kind }} #{{ id }}</span></div>
 <div class="page-head">
-  <div><h1>{{ kind }} <span class="muted" style="font-weight:400">#{{ id }}</span> <span class="badge {{ status }}">{{ status }}</span></h1>
+  <div><h1>{{ kind }} <span class="light">#{{ id }}</span> <span class="badge {{ status }}">{{ status }}</span></h1>
   <p class="desc">Started {{ created }}{% if !finished.is_empty() %} · finished {{ finished }}{% endif %}{% if running %} · refreshing every 2 s{% endif %}</p></div>
-  <div class="actions">{% if let Some(a) = app_id %}<a class="btn" href="/apps/{{ a }}/history">History</a>{% endif %}</div>
+  <div class="actions">{% if let Some(a) = app_id %}<a class="btn btn-secondary" href="/apps/{{ a }}/history">Deployments</a>{% endif %}</div>
 </div>
 <pre class="log" id="log">{{ log }}</pre>
 {% endblock %}

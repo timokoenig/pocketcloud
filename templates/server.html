@@ -1,104 +1,109 @@
 {% extends "layout.html" %}
 {% block content %}
 <div class="page-head">
-  <div><h1>Server</h1><p class="desc">{% if !host.hostname.is_empty() %}{{ host.hostname }} · {% endif %}https://{{ interface_host }}</p></div>
+  <div><h1>Server</h1><p class="desc">{% if !host.hostname.is_empty() %}<span>{{ host.hostname }}</span><span class="sep">{% endif %}https://{{ interface_host }}{% if !host.hostname.is_empty() %}</span>{% endif %}</p></div>
 </div>
 {% include "_tabs_server.html" %}
-{% if host.reboot_required %}<div class="alert warn"><div class="body"><div class="title">Reboot required</div>Pending updates need a reboot; reboots never happen on their own.</div></div>{% endif %}
+{% if host.reboot_required %}<div class="alert warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg><div class="body"><div class="title">Reboot required</div>Pending updates need a reboot; reboots never happen on their own.</div></div>{% endif %}
 
 <div class="stats">
   <div class="stat"><div class="label">Uptime</div><div class="value">{{ uptime }}</div><div class="sub">load {{ host.load }}</div></div>
-  <div class="stat"><div class="label">Memory</div><div class="value">{{ mem_used_pct }}<small>% of {{ host.mem_total_mb }} MB</small></div><div class="meter{% if mem_used_pct >= 95 %} bad{% else if mem_used_pct >= 85 %} warn{% endif %}"><i style="width:{{ mem_used_pct }}%"></i></div></div>
-  <div class="stat"><div class="label">Disk</div><div class="value">{{ disk_used_pct }}<small>% of {{ "{:.0}"|format(host.disk_total_gb) }} GB</small></div><div class="meter{% if disk_used_pct >= 90 %} bad{% else if disk_used_pct >= 80 %} warn{% endif %}"><i style="width:{{ disk_used_pct }}%"></i></div></div>
-  <div class="stat{% if services_ok < host.services.len() %} bad{% endif %}"><div class="label">Services</div><div class="value">{{ services_ok }}<small>of {{ host.services.len() }} running</small></div></div>
+  <div class="stat"><div class="label">Memory</div><div class="value">{{ mem_used_pct }}<small>% of {{ host.mem_total_mb }} MB</small></div><progress class="meter{% if mem_used_pct >= 95 %} bad{% else if mem_used_pct >= 85 %} warn{% endif %}" max="100" value="{{ mem_used_pct }}"></progress></div>
+  <div class="stat"><div class="label">Disk</div><div class="value">{{ disk_used_pct }}<small>% of {{ "{:.0}"|format(host.disk_total_gb) }} GB</small></div><progress class="meter{% if disk_used_pct >= 90 %} bad{% else if disk_used_pct >= 80 %} warn{% endif %}" max="100" value="{{ disk_used_pct }}"></progress></div>
+  <div class="stat{% if services_ok < host.services.len() %} bad{% endif %}"><div class="label">System services</div><div class="value">{{ services_ok }}<small>of {{ host.services.len() }} running</small></div></div>
 </div>
 
 <div class="grid-2">
-  <div class="card">
-    <div class="card-head"><div><div class="card-title">Host</div></div></div>
-    <div class="card-body">
-      <dl class="kv">
-        <dt>Hostname</dt><dd>{{ host.hostname }}</dd>
-        <dt>Addresses</dt><dd class="mono lines">{% for ip in public_ips %}<div>{{ ip }}</div>{% endfor %}</dd>
-        <dt>Interface</dt><dd class="mono">https://{{ interface_host }}</dd>
-        <dt>VPN</dt><dd>UDP port {{ vpn_port }}</dd>
-        <dt>Domains</dt><dd>{{ domains.join(", ") }}</dd>
-        <dt>Daemon</dt><dd>{{ base.version }}, started {{ daemon_started }}</dd>
-      </dl>
+  <div class="section">
+    <div class="section-head"><div><h2 class="section-title">Host</h2></div></div>
+    <dl class="kv">
+      <dt>Hostname</dt><dd>{{ host.hostname }}</dd>
+      <dt>Addresses</dt><dd class="mono lines">{% for ip in public_ips %}<div>{{ ip }}</div>{% endfor %}</dd>
+      <dt>Interface</dt><dd class="mono">https://{{ interface_host }}</dd>
+      <dt>VPN</dt><dd>UDP port {{ vpn_port }}</dd>
+      <dt>Domains</dt><dd>{{ domains.join(", ") }}</dd>
+      <dt>Daemon</dt><dd>{{ base.version }}, started {{ daemon_started }}</dd>
+    </dl>
+  </div>
+  <div class="section">
+    <div class="section-head"><div><h2 class="section-title">System services</h2></div></div>
+    <ul class="plain">
+    {% for s in host.services %}<li><span class="dot {% if s.1 %}ok{% else %}bad{% endif %}"></span>{{ s.0 }}<span class="right">{% if s.1 %}running{% else %}<span class="text-danger">down</span>{% endif %}</span></li>{% endfor %}
+    </ul>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Certificates</h2><p class="section-desc">One wildcard certificate per domain, renewed on its own.</p></div>
+    <div class="actions"><form method="post" action="/server/renew-certificates" class="inline" data-confirm="Request new certificates now?"><button class="btn btn-sm btn-secondary">Renew now</button></form></div>
+  </div>
+  <div class="rows">
+  {% for c in certs %}
+  <div class="row-item"><span class="dot {% if c.last_error.is_empty() %}ok{% else %}bad{% endif %}"></span><div class="row-main"><div class="row-title mono">*.{{ c.domain }}</div><div class="row-sub">{% if c.last_error.is_empty() %}valid until {{ c.not_after }}{% else %}<span class="text-danger">{{ c.last_error }}</span>{% endif %}</div></div>{% if c.last_error.is_empty() %}<div class="row-side">{{ c.days_left }} days left</div>{% endif %}</div>
+  {% endfor %}
+  {% if certs.is_empty() %}<div class="row-item"><div class="row-main muted">Not issued yet{% for d in domains %} · {{ d }}{% endfor %}</div></div>{% endif %}
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">System updates</h2><p class="section-desc">Security updates install daily on their own. Checked {{ pending_checked }}.</p></div>
+    <div class="actions">
+      <form method="post" action="/server/check-updates" class="inline"><button class="btn btn-sm btn-secondary">Check</button></form>
+      {% if !host.pending_updates.is_empty() %}<form method="post" action="/server/upgrade" class="inline" data-confirm="Install all pending updates now?"><button class="btn btn-sm btn-primary">Install updates</button></form>{% endif %}
+      <details class="dialog">
+        <summary class="btn btn-sm {% if host.reboot_required %}btn-primary{% else %}btn-secondary{% endif %}">Reboot…</summary>
+        <div class="dialog-panel" role="dialog" aria-label="Reboot">
+          <form method="post" action="/server/reboot">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Reboot the server</h3></div>
+            <div class="dialog-body">
+              <p>Apps are unreachable for a minute or two and come back on their own.</p>
+              <label class="field"><span>Type <code>reboot</code> to confirm</span><input name="confirm" required autocomplete="off"></label>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-destructive">Reboot</button></div></div>
+          </form>
+        </div>
+      </details>
     </div>
   </div>
-  <div class="card">
-    <div class="card-head"><div><div class="card-title">Services</div></div></div>
-    <div class="card-body" style="padding-top:12px">
-      <ul class="plain">
-      {% for s in host.services %}<li><span class="dot {% if s.1 %}ok{% else %}bad{% endif %}"></span>{{ s.0 }}<span class="right">{% if s.1 %}running{% else %}down{% endif %}</span></li>{% endfor %}
-      </ul>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-head"><div><div class="card-title">Certificates</div></div><form method="post" action="/server/renew-certificates" class="inline" data-confirm="Request new certificates now?"><button class="btn btn-sm">Renew now</button></form></div>
-    <div class="card-body" style="padding-top:12px">
-      <ul class="plain">
-      {% for c in certs %}
-      <li><span class="dot {% if c.last_error.is_empty() %}ok{% else %}bad{% endif %}"></span><span class="text"><span class="mono">*.{{ c.domain }}</span><span class="sub">{% if c.last_error.is_empty() %}valid until {{ c.not_after }}{% else %}<span class="text-destructive">{{ c.last_error }}</span>{% endif %}</span></span>{% if c.last_error.is_empty() %}<span class="right">{{ c.days_left }} days left</span>{% endif %}</li>
-      {% endfor %}
-      {% if certs.is_empty() %}<li class="muted">Not issued yet{% for d in domains %} · {{ d }}{% endfor %}</li>{% endif %}
-      </ul>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-head"><div><div class="card-title">System updates</div><div class="card-desc">Security updates install daily on their own. Checked {{ pending_checked }}.</div></div></div>
-    <div class="card-body">
-      <p>{% if host.pending_updates.is_empty() %}<span class="badge success plain">up to date</span>{% else %}<span class="badge warning plain">{{ host.pending_updates.len() }} package{% if host.pending_updates.len() != 1 %}s{% endif %} pending</span>{% endif %}</p>
-      {% if !host.pending_updates.is_empty() %}<p class="small muted mono" style="margin-top:8px;word-break:break-word">{{ host.pending_updates.join(", ") }}</p>{% endif %}
-      <div class="row" style="margin-top:16px">
-        <form method="post" action="/server/check-updates" class="inline"><button class="btn btn-sm">Check</button></form>
-        <form method="post" action="/server/upgrade" class="inline" data-confirm="Install all pending updates now?"><button class="btn btn-sm">Install updates</button></form>
-      </div>
-    </div>
-    <div class="card-foot">
-      <form method="post" action="/server/reboot" class="form-row">
-        <label class="field"><span>Type <code>reboot</code> to confirm</span><input name="confirm" class="confirm-input" required autocomplete="off"></label>
-        <div class="field fixed"><button class="btn btn-sm btn-danger">Reboot</button></div>
-      </form>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-head"><div><div class="card-title">Pocketcloud</div><div class="card-desc">Running {{ base.version }}{% if !newer_release.is_empty() %} · <span class="badge warning plain">release {{ newer_release }} available</span>{% endif %}</div></div></div>
-    <div class="card-body">
-      <form method="post" action="/server/upgrade-pocketcloud" class="form-row" data-confirm="Download the release, verify it and restart pocketcloud? Apps keep running.">
-        <label class="field"><span>Version</span><input name="version" placeholder="newest" class="w-sm"></label>
-        <div class="field fixed"><button class="btn btn-primary">Upgrade</button></div>
-      </form>
-      <p class="muted small" style="margin-top:10px">Downloaded from GitHub and checked against the published checksums; the interface is back within a minute, apps are not touched.</p>
-      <details class="disclosure" style="margin-top:16px">
-        <summary>Install an uploaded build</summary>
-        <div class="content">
-          <form method="post" action="/server/upload-build" enctype="multipart/form-data" class="form-row" data-confirm="Install the uploaded build and restart pocketcloud?">
-            <label class="field"><span>pocketcloud binary</span><input type="file" name="pocketcloud" required></label>
-            <label class="field"><span>caddy binary <span class="hint">optional</span></span><input type="file" name="caddy"></label>
-            <div class="field fixed"><button class="btn">Install</button></div>
+  {% if host.pending_updates.is_empty() %}<p class="ok-line"><span class="dot ok"></span>Up to date</p>{% else %}
+  <p><span class="badge warning plain">{{ host.pending_updates.len() }} package{% if host.pending_updates.len() != 1 %}s{% endif %} pending</span></p>
+  <p class="small muted mono break mt-1">{{ host.pending_updates.join(", ") }}</p>{% endif %}
+</div>
+
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Pocketcloud</h2><p class="section-desc">Running {{ base.version }}{% if !newer_release.is_empty() %} · <span class="badge warning plain">release {{ newer_release }} available</span>{% endif %}</p></div>
+    <div class="actions">
+      <details class="dialog">
+        <summary class="btn btn-sm btn-secondary">Install a build…</summary>
+        <div class="dialog-panel" role="dialog" aria-label="Install an uploaded build">
+          <form method="post" action="/server/upload-build" enctype="multipart/form-data" data-confirm="Install the uploaded build and restart pocketcloud?">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Install an uploaded build</h3></div>
+            <div class="dialog-body">
+              <label class="field"><span>pocketcloud binary</span><input type="file" name="pocketcloud" required></label>
+              <label class="field"><span>caddy binary <span class="hint">optional</span></span><input type="file" name="caddy"></label>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Install</button></div></div>
+          </form>
+        </div>
+      </details>
+      <details class="dialog">
+        <summary class="btn btn-sm {% if newer_release.is_empty() %}btn-secondary{% else %}btn-primary{% endif %}">Upgrade…</summary>
+        <div class="dialog-panel" role="dialog" aria-label="Upgrade pocketcloud">
+          <form method="post" action="/server/upgrade-pocketcloud" data-confirm="Download the release, verify it and restart pocketcloud? Apps keep running.">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Upgrade pocketcloud</h3></div>
+            <div class="dialog-body">
+              <label class="field"><span>Version <span class="hint">empty for the newest</span></span><input name="version" placeholder="{% if newer_release.is_empty() %}newest{% else %}{{ newer_release }}{% endif %}"></label>
+              <p class="hint">Downloaded from GitHub and checked against the published checksums; the interface is back within a minute, apps are not touched.</p>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Upgrade</button></div></div>
           </form>
         </div>
       </details>
     </div>
   </div>
 </div>
-<div class="card danger" style="margin-top:20px">
-  <div class="card-head"><div><div class="card-title">Tear down this server</div><div class="card-desc">Removes every app with its volumes, wipes the server's state and master key, and powers it off. With a Hetzner token it also deletes the DNS records, the firewall, the ssh key and the server itself; tokens are used once and never stored. Backup snapshots in the bucket stay.</div></div></div>
-  <div class="card-body">
-    <details class="disclosure danger">
-      <summary>Tear down {{ base.name }}</summary>
-      <div class="content">
-        <form method="post" action="/server/teardown" autocomplete="off" class="form-grid" data-confirm="Tear down {{ base.name }}? Apps, data and the server's keys are deleted. This cannot be undone.">
-          <label class="field span-2"><span>Recovery phrase <span class="hint">the 24 words, the proof that this is you</span></span><textarea name="phrase" rows="2" class="code" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
-          <label class="field"><span>Hetzner Cloud token <span class="hint">optional: also deletes server, firewall and key</span></span><textarea name="cloud_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
-          <label class="field"><span>Hetzner DNS token <span class="hint">optional: the cloud token when empty</span></span><textarea name="dns_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
-          <label class="field"><span>Type <code>{{ base.name }}</code> to confirm</span><input name="confirm" required autocomplete="off" class="confirm-input"></label>
-          <div class="field" style="justify-content:flex-end"><div><button class="btn btn-destructive">Tear down</button></div></div>
-        </form>
-      </div>
-    </details>
-  </div>
-</div>
+
 {% endblock %}
