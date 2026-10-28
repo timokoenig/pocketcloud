@@ -189,7 +189,8 @@ handling is off (`/etc/docker/daemon.json`), so a container can never publish a 
 
 ## Audit
 
-Every action in the interface is in *Alerts → Audit log*. On the host, auditd records privileged commands, changes under
+Every action in the interface is in *Alerts → Audit log*, and so is every change an agent makes through the MCP
+endpoint, as `agent:<name>` (see agents.md). On the host, auditd records privileged commands, changes under
 `/etc/pocketcloud`, `/etc/wireguard`, `/etc/docker`, `/etc/caddy`, `/etc/ssh` and the usual identity files; the
 Server → Security shows this week's summary. AIDE checks file integrity nightly at 04:30; the report is on the same tab.
 After an intended system change (upgrade, new packages) the next report lists those files; refresh the baseline with

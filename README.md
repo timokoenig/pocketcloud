@@ -17,13 +17,16 @@ manage compose apps from a web interface that is reachable through WireGuard onl
 - Built-in monitoring: journal, auditd, Falco and Docker events plus host metrics, fixed checks, alerts by mail or
   webhook, a heartbeat for a dead man's switch. Nightly restic backups to S3 with restore.
 - **Interface**: Apps, Server (overview, backups, security), Alerts (alerts, host metrics, events, audit log) and Settings
-  (notifications, VPN devices, ssh keys, registries, account with teardown); everything after setup is managed there.
+  (notifications, VPN devices, ssh keys, agents, registries, account with teardown); everything after setup is managed there.
+- **Agents**: the daemon is an MCP server at `https://pocketcloud.<domain>/mcp`, through the VPN only. A token from
+  Settings → Agents lets Claude Code on your laptop list apps, read logs, change compose files, secrets and routes,
+  and deploy, with every action in the audit log ([docs/agents.md](docs/agents.md)).
 - **Recovery**: lost every device? Hetzner's rescue system and `pocketcloud recover` with the 24 words give you a
   new device and, if needed, a new password. Lost the server? Setup again with the same phrase, then restore.
   Done with it? *Tear down* under Settings → Account, proven by the phrase, removes apps, keys and optionally the
   server and DNS records.
 
-Guides: [docs/setup.md](docs/setup.md), [docs/apps.md](docs/apps.md),
+Guides: [docs/setup.md](docs/setup.md), [docs/apps.md](docs/apps.md), [docs/agents.md](docs/agents.md),
 [docs/operations.md](docs/operations.md), [docs/troubleshooting.md](docs/troubleshooting.md), [docs/security.md](docs/security.md).
 
 ## Quick start

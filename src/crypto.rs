@@ -118,6 +118,12 @@ pub fn random_token(bytes: usize) -> String {
     hex::encode(b)
 }
 
+/// What the database keeps of an API token: its SHA-256, hex. The token itself is shown once and never stored.
+pub fn token_hash(token: &str) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(token.trim().as_bytes()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

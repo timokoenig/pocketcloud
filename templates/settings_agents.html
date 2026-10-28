@@ -1,0 +1,47 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="page-head"><div><h1>Settings</h1></div></div>
+{% include "_tabs_settings.html" %}
+{% if let Some(t) = new_token %}
+<div class="card">
+  <div class="card-head"><div><div class="card-title">{{ t.name }} is ready</div><div class="card-desc">This is the token, shown once and not stored: close this page and it is gone. Add the server to Claude Code with the tunnel active:</div></div></div>
+  <div class="card-body">
+    <pre class="log">{{ t.command }}</pre>
+    <p class="section-desc">Or, for a project's <code>.mcp.json</code> with the token in <code>POCKETCLOUD_TOKEN</code>:</p>
+    <pre class="log">{{ t.mcp_json }}</pre>
+    <p class="section-desc">Token: <span class="mono break">{{ t.token }}</span></p>
+  </div>
+</div>
+<div class="mt-4"></div>
+{% endif %}
+<div class="section">
+  <div class="section-head">
+    <div><h2 class="section-title">Agents <span class="count">{{ agents.len() }}</span></h2><p class="section-desc">Tokens for the MCP endpoint <span class="mono">{{ mcp_url }}</span>, reachable through the VPN only. <em>read</em> looks at apps, logs, jobs and the server; <em>deploy</em> also creates apps, changes compose files, secrets and routes, and deploys, starts and stops. Neither removes an app or touches the server, the VPN or these settings. Actions appear in the audit log as <span class="mono">agent:&lt;name&gt;</span>.</p></div>
+    <div class="actions">
+      <details class="dialog">
+        <summary class="btn btn-sm btn-primary">Add agent</summary>
+        <div class="dialog-panel" role="dialog" aria-label="Add an agent">
+          <form method="post" action="/settings/agents" autocomplete="off">
+            <div class="dialog-head"><button type="button" class="dialog-close" data-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button><h3>Add an agent</h3></div>
+            <div class="dialog-body">
+              <label class="field"><span>Name</span><input name="name" placeholder="laptop" pattern="[A-Za-z0-9_-]{1,32}" required></label>
+              <div class="field"><span>Scope</span>
+                <label class="check-card"><input type="radio" name="scope" value="read" checked><span class="text"><b>read</b><span>Apps, logs, jobs, server status, alerts and events</span></span></label>
+                <label class="check-card"><input type="radio" name="scope" value="deploy"><span class="text"><b>deploy</b><span>Also create apps, edit compose, secrets and routes, deploy, start and stop</span></span></label>
+              </div>
+            </div>
+            <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-primary">Create</button></div></div>
+          </form>
+        </div>
+      </details>
+    </div>
+  </div>
+  {% if agents.is_empty() %}<div class="empty"><b>No agents yet</b>Create a token for each agent that should reach the MCP endpoint, for example Claude Code on your laptop.</div>{% else %}
+  <div class="rows">
+    {% for a in agents %}
+    <div class="row-item"><div class="row-main"><div class="row-title">{{ a.name }} <span class="badge {{ a.scope }}">{{ a.scope }}</span></div><div class="row-sub">last used {{ a.last_used }}</div></div><div class="row-side">added {{ a.created }}</div><div class="row-actions"><form method="post" action="/settings/agents/{{ a.id }}/delete" class="inline" data-confirm="Revoke the token of {{ a.name }}? Its next request is refused."><button class="btn btn-sm btn-ghost text-danger">Revoke</button></form></div></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

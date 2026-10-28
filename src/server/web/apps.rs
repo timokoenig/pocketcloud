@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use super::auth::{Flash, User};
 use super::{back, html, views, R};
+use crate::server::actions::{self, ActionError, JobKind};
 use crate::server::state::Shared;
 use crate::server::{compose, db, deploy, docker, jobs};
 
@@ -30,6 +31,14 @@ volumes:
 
 async fn load_app(state: &Shared, id: i64) -> anyhow::Result<db::App> {
     db::app(&state.db, id).await?.ok_or_else(|| anyhow::anyhow!("app {id} not found"))
+}
+
+/// An action's refusal goes back to the page as the message; anything else is an error page.
+fn refused(e: ActionError, page: &str) -> R {
+    match e {
+        ActionError::Invalid(m) => Ok(back(page, None, Some(&m))),
+        ActionError::Other(e) => Err(e.into()),
+    }
 }
 
 fn job_rows(jobs: &[db::Job], app_name: &str) -> Vec<views::JobRow> {
@@ -59,19 +68,10 @@ pub struct NewAppForm {
 }
 
 pub async fn create(State(state): State<Shared>, user: User, Form(f): Form<NewAppForm>) -> R {
-    let name = f.name.trim().to_lowercase();
-    if let Err(e) = compose::validate_app_name(&name) {
-        return Ok(back("/apps/new", None, Some(&e.to_string())));
+    match actions::create_app(&state, &user.username, &f.name, &f.compose).await {
+        Ok(app) => Ok(back(&format!("/apps/{}", app.id), Some("app created, add routes and secrets, then deploy"), None)),
+        Err(e) => refused(e, "/apps/new"),
     }
-    if db::app_by_name(&state.db, &name).await?.is_some() {
-        return Ok(back("/apps/new", None, Some("an app with this name exists")));
-    }
-    if let Err(e) = compose::check(&f.compose) {
-        return Ok(back("/apps/new", None, Some(&format!("compose file: {e:#}"))));
-    }
-    let app = db::create_app(&state.db, &name, &f.compose).await?;
-    db::audit(&state.db, &user.username, "app.create", &name).await?;
-    Ok(back(&format!("/apps/{}", app.id), Some("app created, add routes and secrets, then deploy"), None))
 }
 
 pub async fn show(State(state): State<Shared>, user: User, Path(id): Path<i64>, Query(f): Query<Flash>) -> R {
@@ -118,17 +118,6 @@ pub async fn show_logs(State(state): State<Shared>, user: User, Path(id): Path<i
     show_tab(state, user, id, Flash { msg: None, error: None }, "logs", q.service, tail).await
 }
 
-/// The last `tail` lines of one service's container, secret values redacted.
-async fn service_log(state: &Shared, app_id: i64, containers: &[docker::ContainerInfo], service: &str, tail: usize) -> anyhow::Result<String> {
-    let Some(d) = &state.docker else { return Ok("docker is not available".into()) };
-    let Some(c) = containers.iter().find(|c| c.service == service) else {
-        return Ok("no container for this service; deploy the app to start it".into());
-    };
-    let raw = docker::logs(d, &c.id, tail).await?;
-    // never show secret values
-    Ok(jobs::Log::new(state.db.clone(), 0, deploy::secret_values(state, app_id).await?).redact(&raw))
-}
-
 /// The log of one service as plain text, for the live view of the Logs tab.
 pub async fn logs_text(State(state): State<Shared>, _user: User, Path(id): Path<i64>, Query(q): Query<LogsQuery>) -> R {
     let app = load_app(&state, id).await?;
@@ -137,7 +126,7 @@ pub async fn logs_text(State(state): State<Shared>, _user: User, Path(id): Path<
         Some(d) => docker::containers_of(d, &app.name).await.unwrap_or_default(),
         None => vec![],
     };
-    let text = service_log(&state, id, &containers, q.service.as_deref().unwrap_or_default(), tail).await?;
+    let text = actions::service_logs(&state, &app, &containers, q.service.as_deref().unwrap_or_default(), tail).await?;
     Ok(([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response())
 }
 
@@ -244,7 +233,7 @@ async fn show_tab(state: Shared, user: User, id: i64, f: Flash, tab: &'static st
         Some(s) if services.contains(&s) => s,
         _ => services.first().cloned().unwrap_or_default(),
     };
-    let log = if tab == "logs" && !service.is_empty() { service_log(&state, id, &containers, &service, tail).await? } else { String::new() };
+    let log = if tab == "logs" && !service.is_empty() { actions::service_logs(&state, &app, &containers, &service, tail).await? } else { String::new() };
     let backup_enabled = crate::server::backup::settings(&state).await.is_some();
     html(views::AppShow {
         base: views::Base::new(&app.name, &user.username, &state.config.name, &f),
@@ -369,30 +358,14 @@ pub struct EgressForm {
 pub async fn set_egress(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<EgressForm>) -> R {
     let app = load_app(&state, id).await?;
     let page = format!("/apps/{id}/network");
-    let egress = match f.mode.as_str() {
-        "all" => "all".to_string(),
-        "none" => "none".to_string(),
-        "ports" => {
-            let mut ports = Vec::new();
-            for p in f.ports.split([',', ' ', ';']).filter(|p| !p.is_empty()) {
-                match p.parse::<u16>() {
-                    Ok(n) if n > 0 => ports.push(n.to_string()),
-                    _ => return Ok(back(&page, None, Some(&format!("`{p}` is not a port")))),
-                }
-            }
-            if ports.is_empty() {
-                return Ok(back(&page, None, Some("list at least one TCP port, or choose none")));
-            }
-            ports.join(",")
-        }
-        _ => return Ok(back(&page, None, Some("mode must be all, none or ports"))),
+    let egress = match actions::parse_egress(&f.mode, &f.ports) {
+        Ok(e) => e,
+        Err(m) => return Ok(back(&page, None, Some(&m))),
     };
-    db::set_app_egress(&state.db, id, &egress).await?;
-    db::audit(&state.db, &user.username, "app.egress", &format!("{} {egress}", app.name)).await?;
-    if app.desired == "running" {
-        crate::server::reconcile::apply(&state).await?;
+    match actions::set_egress(&state, &user.username, &app, &egress).await {
+        Ok(()) => Ok(back(&page, Some("internet access updated"), None)),
+        Err(e) => refused(e, &page),
     }
-    Ok(back(&page, Some("internet access updated"), None))
 }
 
 #[derive(Deserialize)]
@@ -452,40 +425,28 @@ pub struct ComposeForm {
 
 pub async fn update_compose(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<ComposeForm>) -> R {
     let app = load_app(&state, id).await?;
-    if let Err(e) = compose::check(&f.compose) {
-        return Ok(back(&format!("/apps/{id}/edit"), None, Some(&format!("compose file: {e:#}"))));
+    match actions::update_compose(&state, &user.username, &app, &f.compose).await {
+        Ok(()) => Ok(back(&format!("/apps/{id}"), Some("compose file saved, deploy to apply"), None)),
+        Err(e) => refused(e, &format!("/apps/{id}/edit")),
     }
-    db::update_compose(&state.db, id, &f.compose).await?;
-    db::audit(&state.db, &user.username, "app.compose", &app.name).await?;
-    Ok(back(&format!("/apps/{id}"), Some("compose file saved, deploy to apply"), None))
 }
 
-async fn run_job(state: &Shared, app: &db::App, kind: &str, pull: bool) -> anyhow::Result<i64> {
-    let redact = deploy::secret_values(state, app.id).await?;
-    let app_id = app.id;
-    jobs::spawn(state, kind, Some(app.id), redact, move |s, log| deploy::deploy(s, app_id, log, pull)).await
+/// Start a job for the app and show it; a refusal (docker missing, a job still running) goes back to the app page.
+async fn run_job(state: &Shared, user: &User, id: i64, kind: JobKind) -> R {
+    let app = load_app(state, id).await?;
+    match actions::start_job(state, &user.username, &app, kind).await {
+        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
+        Err(e) => refused(e, &format!("/apps/{id}")),
+    }
 }
 
 pub async fn deploy(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
-    let app = load_app(&state, id).await?;
-    if state.docker.is_none() {
-        return Ok(back(&format!("/apps/{id}"), None, Some("docker is not available")));
-    }
-    db::audit(&state.db, &user.username, "app.deploy", &app.name).await?;
-    match run_job(&state, &app, "deploy", true).await {
-        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
-        Err(e) => Ok(back(&format!("/apps/{id}"), None, Some(&e.to_string()))),
-    }
+    run_job(&state, &user, id, JobKind::Deploy).await
 }
 
 /// Recreate the containers with the current compose file and secrets, images pinned to the last deployment.
 pub async fn apply(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
-    let app = load_app(&state, id).await?;
-    db::audit(&state.db, &user.username, "app.apply", &app.name).await?;
-    match run_job(&state, &app, "apply", false).await {
-        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
-        Err(e) => Ok(back(&format!("/apps/{id}"), None, Some(&e.to_string()))),
-    }
+    run_job(&state, &user, id, JobKind::Apply).await
 }
 
 pub async fn scan(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
@@ -500,22 +461,11 @@ pub async fn scan(State(state): State<Shared>, user: User, Path(id): Path<i64>) 
 }
 
 pub async fn start(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
-    let app = load_app(&state, id).await?;
-    db::audit(&state.db, &user.username, "app.start", &app.name).await?;
-    match run_job(&state, &app, "start", false).await {
-        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
-        Err(e) => Ok(back(&format!("/apps/{id}"), None, Some(&e.to_string()))),
-    }
+    run_job(&state, &user, id, JobKind::Start).await
 }
 
 pub async fn stop(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
-    let app = load_app(&state, id).await?;
-    db::audit(&state.db, &user.username, "app.stop", &app.name).await?;
-    let redact = deploy::secret_values(&state, app.id).await?;
-    match jobs::spawn(&state, "stop", Some(id), redact, move |s, log| deploy::stop(s, id, log)).await {
-        Ok(job) => Ok(back(&format!("/jobs/{job}"), None, None)),
-        Err(e) => Ok(back(&format!("/apps/{id}"), None, Some(&e.to_string()))),
-    }
+    run_job(&state, &user, id, JobKind::Stop).await
 }
 
 #[derive(Deserialize)]
@@ -553,38 +503,11 @@ pub struct RouteForm {
 
 pub async fn add_route(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<RouteForm>) -> R {
     let app = load_app(&state, id).await?;
-    let host = f.host.trim().to_lowercase();
     let page = format!("/apps/{id}/network");
-    // the certificate covers the domain itself and one label below it; both point at the server
-    let Some(domain) = state.config.domains.iter().find(|d| &host == *d || host.ends_with(&format!(".{d}"))) else {
-        return Ok(back(&page, None, Some("the host must be one of the configured domains or one label below it")));
-    };
-    let depth = host.split('.').count() - domain.split('.').count();
-    if host.starts_with("*.") || depth > 1 || host.contains("..") {
-        return Ok(back(&page, None, Some("use the domain itself or exactly one label below it, the wildcard certificate covers only those")));
+    match actions::add_route(&state, &user.username, &app, &f.host, &f.service, f.port, &f.expose, f.waf.is_some(), f.headers.is_some()).await {
+        Ok(()) => Ok(back(&page, Some("route added"), None)),
+        Err(e) => refused(e, &page),
     }
-    if host == state.config.interface_host {
-        return Ok(back(&page, None, Some("that host is the interface")));
-    }
-    if !(1..=65535).contains(&f.port) {
-        return Ok(back(&page, None, Some("port out of range")));
-    }
-    if !matches!(f.expose.as_str(), "public" | "internal") {
-        return Ok(back(&page, None, Some("expose must be public or internal")));
-    }
-    let services = compose::check(&app.compose).unwrap_or_default();
-    if !services.contains(&f.service) {
-        return Ok(back(&page, None, Some("unknown service")));
-    }
-    let (waf, headers) = (f.waf.is_some(), f.headers.is_some());
-    if let Err(e) = db::add_route(&state.db, id, &host, &f.service, f.port, &f.expose, waf, headers).await {
-        return Ok(back(&page, None, Some(&format!("route not added: {e}"))));
-    }
-    db::audit(&state.db, &user.username, "route.add", &format!("{} {} -> {}:{} {} waf={waf} headers={headers}", app.name, host, f.service, f.port, f.expose)).await?;
-    if app.desired == "running" {
-        crate::server::reconcile::apply(&state).await?;
-    }
-    Ok(back(&page, Some("route added"), None))
 }
 
 #[derive(Deserialize)]
@@ -611,10 +534,10 @@ pub async fn set_route_flag(State(state): State<Shared>, user: User, Path((id, r
 
 pub async fn delete_route(State(state): State<Shared>, user: User, Path((id, rid)): Path<(i64, i64)>) -> R {
     let app = load_app(&state, id).await?;
-    db::delete_route(&state.db, id, rid).await?;
-    db::audit(&state.db, &user.username, "route.delete", &format!("{} route {rid}", app.name)).await?;
-    crate::server::reconcile::apply(&state).await?;
-    Ok(back(&format!("/apps/{id}/network"), Some("route removed"), None))
+    match actions::delete_route(&state, &user.username, &app, rid).await {
+        Ok(()) => Ok(back(&format!("/apps/{id}/network"), Some("route removed"), None)),
+        Err(e) => refused(e, &format!("/apps/{id}/network")),
+    }
 }
 
 #[derive(Deserialize)]
@@ -629,26 +552,12 @@ pub struct SecretForm {
 
 pub async fn put_secret(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<SecretForm>) -> R {
     let app = load_app(&state, id).await?;
-    let key = f.key.trim().to_string();
     let page = format!("/apps/{id}/secrets");
-    if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || key.starts_with(|c: char| c.is_ascii_digit()) {
-        return Ok(back(&page, None, Some("secret names are environment variable names: letters, digits, underscores")));
+    let ticked: Vec<String> = f.rest.keys().filter_map(|k| k.strip_prefix("svc_")).map(str::to_string).collect();
+    match actions::put_secret(&state, &user.username, &app, &f.key, &f.value, Some(&ticked)).await {
+        Ok(msg) => Ok(back(&page, Some(&msg), None)),
+        Err(e) => refused(e, &page),
     }
-    let services = compose::check(&app.compose).unwrap_or_default();
-    let mut scope: Vec<String> = f.rest.keys().filter_map(|k| k.strip_prefix("svc_")).filter(|s| services.iter().any(|x| x == s)).map(str::to_string).collect();
-    scope.sort();
-    let scope = if scope.len() == services.len() { String::new() } else { scope.join(",") };
-    let value = f.value.trim_end_matches(['\r', '\n']);
-    if value.is_empty() {
-        if !db::set_secret_services(&state.db, id, &key, &scope).await? {
-            return Ok(back(&page, None, Some("a new secret needs a value")));
-        }
-        db::audit(&state.db, &user.username, "secret.scope", &format!("{} {key} {}", app.name, if scope.is_empty() { "all" } else { &scope })).await?;
-        return Ok(back(&page, Some(&format!("secret {key} now reaches {}, deploy to apply", if scope.is_empty() { "every service".to_string() } else { scope.replace(',', ", ") })), None));
-    }
-    db::put_secret(&state.db, id, &key, &state.key.seal(value.as_bytes()), &scope).await?;
-    db::audit(&state.db, &user.username, "secret.put", &format!("{} {key} -> {}", app.name, if scope.is_empty() { "all" } else { &scope })).await?;
-    Ok(back(&page, Some(&format!("secret {key} saved, deploy to apply")), None))
 }
 
 #[derive(Deserialize)]
@@ -658,9 +567,10 @@ pub struct SecretDeleteForm {
 
 pub async fn delete_secret(State(state): State<Shared>, user: User, Path(id): Path<i64>, Form(f): Form<SecretDeleteForm>) -> R {
     let app = load_app(&state, id).await?;
-    db::delete_secret(&state.db, id, &f.key).await?;
-    db::audit(&state.db, &user.username, "secret.delete", &format!("{} {}", app.name, f.key)).await?;
-    Ok(back(&format!("/apps/{id}/secrets"), Some("secret removed, deploy to apply"), None))
+    match actions::delete_secret(&state, &user.username, &app, &f.key).await {
+        Ok(()) => Ok(back(&format!("/apps/{id}/secrets"), Some("secret removed, deploy to apply"), None)),
+        Err(e) => refused(e, &format!("/apps/{id}/secrets")),
+    }
 }
 
 #[derive(Deserialize)]

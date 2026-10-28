@@ -20,7 +20,7 @@ impl Base {
         let nav = match title {
             "Server" | "Backups" | "Security" => "server",
             "Alerts" | "Host metrics" | "Events" | "Audit log" => "alerts",
-            "Notifications" | "VPN devices" | "SSH keys" | "Registries" | "Account" => "settings",
+            "Notifications" | "VPN devices" | "SSH keys" | "Agents" | "Registries" | "Account" => "settings",
             _ => "apps",
         };
         Base {
@@ -427,6 +427,32 @@ pub struct SshKeyView {
     pub name: String,
     pub fingerprint: String,
     pub created: String,
+}
+
+pub struct AgentView {
+    pub id: i64,
+    pub name: String,
+    /// read | deploy
+    pub scope: String,
+    pub created: String,
+    pub last_used: String,
+}
+
+/// A token just created, shown once with the lines to paste.
+pub struct NewAgentToken {
+    pub name: String,
+    pub token: String,
+    pub command: String,
+    pub mcp_json: String,
+}
+
+#[derive(Template)]
+#[template(path = "settings_agents.html")]
+pub struct AgentsPage {
+    pub base: Base,
+    pub agents: Vec<AgentView>,
+    pub new_token: Option<NewAgentToken>,
+    pub mcp_url: String,
 }
 
 pub struct BackupForm {

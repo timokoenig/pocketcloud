@@ -1,4 +1,5 @@
-//! The interface: server-rendered HTML, no client-side build, reachable through the VPN only.
+//! The interface: server-rendered HTML, no client-side build, reachable through the VPN only. `/mcp` is the
+//! machine door next to it (mcp.rs), on the same listener and the same VPN-only host.
 mod apps;
 mod auth;
 mod pages;
@@ -150,6 +151,8 @@ pub fn router(state: Shared) -> Router {
         .route("/settings/registries/{id}/delete", post(pages::registry_delete))
         .route("/settings/ssh-keys", get(pages::ssh_keys_page).post(pages::add_ssh_key))
         .route("/settings/ssh-keys/{id}/delete", post(pages::delete_ssh_key))
+        .route("/settings/agents", get(pages::agents_page).post(pages::add_agent))
+        .route("/settings/agents/{id}/delete", post(pages::delete_agent))
         .route("/settings/account", get(pages::account_page))
         .route("/settings/notifications", get(pages::notifications).post(pages::save_notify))
         .route("/settings/notifications/thresholds", post(pages::set_thresholds))
@@ -184,6 +187,8 @@ pub fn router(state: Shared) -> Router {
         .route("/health", get(health))
         .route("/static/app.css", get(css))
         .route("/static/app.js", get(js))
+        // the MCP endpoint for agents: bearer tokens instead of the cookie, see mcp.rs
+        .merge(crate::server::mcp::router(state.clone()))
         .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn(csrf_guard))
         .with_state(state)

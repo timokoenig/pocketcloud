@@ -1006,3 +1006,71 @@ pub async fn audit(State(state): State<Shared>, user: User, Query(f): Query<Flas
         .collect();
     html(views::AuditPage { base: views::Base::new("Audit log", &user.username, &state.config.name, &f), entries })
 }
+
+// ---- agents (MCP tokens) ----
+
+async fn agents_page_view(state: &Shared, user: &User, f: &Flash, new_token: Option<views::NewAgentToken>) -> anyhow::Result<views::AgentsPage> {
+    let agents = db::api_tokens(&state.db)
+        .await?
+        .into_iter()
+        .map(|t| views::AgentView {
+            id: t.id,
+            name: t.name,
+            scope: t.scope,
+            created: views::short_time(&t.created),
+            last_used: t.last_used.as_deref().map(views::ago).unwrap_or_else(|| "never".into()),
+        })
+        .collect();
+    Ok(views::AgentsPage { base: views::Base::new("Agents", &user.username, &state.config.name, f), agents, new_token, mcp_url: mcp_url(state) })
+}
+
+/// Where agents reach the daemon: the interface host through the VPN; the plain listener in dev mode.
+fn mcp_url(state: &Shared) -> String {
+    if state.config.dev {
+        format!("http://{}/mcp", state.config.listen)
+    } else {
+        format!("https://{}/mcp", state.config.interface_host)
+    }
+}
+
+pub async fn agents_page(State(state): State<Shared>, user: User, Query(f): Query<Flash>) -> R {
+    html(agents_page_view(&state, &user, &f, None).await?)
+}
+
+#[derive(Deserialize)]
+pub struct AgentForm {
+    name: String,
+    scope: String,
+}
+
+pub async fn add_agent(State(state): State<Shared>, user: User, Form(f): Form<AgentForm>) -> R {
+    let name = f.name.trim().to_string();
+    if name.is_empty() || name.len() > 32 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Ok(back("/settings/agents", None, Some("agent names: letters, digits, dashes, underscores")));
+    }
+    if !matches!(f.scope.as_str(), "read" | "deploy") {
+        return Ok(back("/settings/agents", None, Some("scope must be read or deploy")));
+    }
+    let token = format!("pc_{}", crate::crypto::random_token(32));
+    if let Err(e) = db::add_api_token(&state.db, &name, &f.scope, &crate::crypto::token_hash(&token)).await {
+        return Ok(back("/settings/agents", None, Some(&format!("not added: {e}"))));
+    }
+    db::audit(&state.db, &user.username, "agent.add", &format!("{name} {}", f.scope)).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} added agent token {name} ({})", user.username, f.scope), &serde_json::json!({"user": user.username, "action": "agent.add"})).await;
+    let url = mcp_url(&state);
+    let new_token = views::NewAgentToken {
+        command: format!("claude mcp add --transport http pocketcloud {url} --header \"Authorization: Bearer {token}\" --scope user"),
+        mcp_json: format!("{{\n  \"mcpServers\": {{\n    \"pocketcloud\": {{\n      \"type\": \"http\",\n      \"url\": \"{url}\",\n      \"headers\": {{ \"Authorization\": \"Bearer ${{POCKETCLOUD_TOKEN}}\" }}\n    }}\n  }}\n}}"),
+        name,
+        token,
+    };
+    // the token must not travel in a redirect; render the page now, once
+    html(agents_page_view(&state, &user, &Flash { msg: None, error: None }, Some(new_token)).await?)
+}
+
+pub async fn delete_agent(State(state): State<Shared>, user: User, Path(id): Path<i64>) -> R {
+    let name = db::delete_api_token(&state.db, id).await?.unwrap_or_default();
+    db::audit(&state.db, &user.username, "agent.delete", &name).await?;
+    let _ = db::add_event(&state.db, "admin_action", "pocketcloud", &format!("{} revoked agent token {name}", user.username), &serde_json::json!({"user": user.username, "action": "agent.delete"})).await;
+    Ok(back("/settings/agents", Some(&format!("agent {name} revoked")), None))
+}

@@ -144,6 +144,14 @@ const SCHEMA: &[&str] = &[
         last_seen TEXT NOT NULL
     )"#,
     "CREATE INDEX IF NOT EXISTS alerts_key_open ON alerts (key, resolved)",
+    r#"CREATE TABLE IF NOT EXISTS api_tokens (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        token_hash TEXT NOT NULL UNIQUE,
+        scope TEXT NOT NULL CHECK (scope IN ('read','deploy')),
+        created TEXT NOT NULL,
+        last_used TEXT
+    )"#,
 ];
 
 async fn migrate(db: &Db) -> Result<()> {
@@ -862,4 +870,65 @@ pub async fn delete_ssh_key(db: &Db, id: i64) -> Result<Option<String>> {
     let name: Option<String> = sqlx::query_scalar("SELECT name FROM ssh_keys WHERE id = ?").bind(id).fetch_optional(db).await?;
     sqlx::query("DELETE FROM ssh_keys WHERE id = ?").bind(id).execute(db).await?;
     Ok(name)
+}
+
+// ---- api tokens (agents) ----
+
+/// A bearer token for the MCP endpoint; `scope` is `read` or `deploy`.
+#[derive(Debug, Clone, FromRow)]
+pub struct ApiToken {
+    pub id: i64,
+    pub name: String,
+    pub token_hash: String,
+    pub scope: String,
+    pub created: String,
+    pub last_used: Option<String>,
+}
+
+pub async fn api_tokens(db: &Db) -> Result<Vec<ApiToken>> {
+    Ok(sqlx::query_as("SELECT * FROM api_tokens ORDER BY name").fetch_all(db).await?)
+}
+
+pub async fn add_api_token(db: &Db, name: &str, scope: &str, token_hash: &str) -> Result<()> {
+    sqlx::query("INSERT INTO api_tokens (name, token_hash, scope, created) VALUES (?, ?, ?, ?)").bind(name).bind(token_hash).bind(scope).bind(now()).execute(db).await?;
+    Ok(())
+}
+
+pub async fn api_token_by_hash(db: &Db, token_hash: &str) -> Result<Option<ApiToken>> {
+    Ok(sqlx::query_as("SELECT * FROM api_tokens WHERE token_hash = ?").bind(token_hash).fetch_optional(db).await?)
+}
+
+pub async fn touch_api_token(db: &Db, id: i64) -> Result<()> {
+    sqlx::query("UPDATE api_tokens SET last_used = ? WHERE id = ?").bind(now()).bind(id).execute(db).await?;
+    Ok(())
+}
+
+pub async fn delete_api_token(db: &Db, id: i64) -> Result<Option<String>> {
+    let name: Option<String> = sqlx::query_scalar("SELECT name FROM api_tokens WHERE id = ?").bind(id).fetch_optional(db).await?;
+    sqlx::query("DELETE FROM api_tokens WHERE id = ?").bind(id).execute(db).await?;
+    Ok(name)
+}
+
+#[cfg(test)]
+mod api_token_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn token_round_trip() {
+        let dir = std::env::temp_dir().join(format!("pocketcloud-db-test-{}", crate::crypto::random_token(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = open(&dir.join("test.sqlite")).await.unwrap();
+        let hash = crate::crypto::token_hash("pc_secret");
+        add_api_token(&db, "laptop", "deploy", &hash).await.unwrap();
+        let t = api_token_by_hash(&db, &hash).await.unwrap().expect("token found by hash");
+        assert_eq!((t.name.as_str(), t.scope.as_str(), t.last_used.is_none()), ("laptop", "deploy", true));
+        assert!(api_token_by_hash(&db, &crate::crypto::token_hash("pc_other")).await.unwrap().is_none());
+        touch_api_token(&db, t.id).await.unwrap();
+        assert!(api_token_by_hash(&db, &hash).await.unwrap().unwrap().last_used.is_some());
+        assert!(add_api_token(&db, "laptop", "read", "x").await.is_err(), "names are unique");
+        assert!(add_api_token(&db, "other", "admin", "y").await.is_err(), "scope is checked");
+        assert_eq!(delete_api_token(&db, t.id).await.unwrap().as_deref(), Some("laptop"));
+        assert!(api_tokens(&db).await.unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

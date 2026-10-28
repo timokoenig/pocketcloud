@@ -55,7 +55,7 @@ password cannot destroy the server. A wrong phrase is audited and answered after
 ## Detection
 
 auditd records changes to identity, sudoers, sshd, ssh keys, firewall, WireGuard, cron, systemd, Docker, Caddy
-and Pocketcloud files; Falco watches syscalls for shells in containers, sensitive file reads, unexpected network
+and Pocketcloud files; the daemon records failed logins and failed agent tokens; Falco watches syscalls for shells in containers, sensitive file reads, unexpected network
 activity and privilege escalation; the daemon turns both, plus the journal and Docker events, into alerts and
 mails them. See operations.md, Monitoring and alerts.
 
@@ -96,6 +96,20 @@ sealed in the database and can delete snapshots; a bucket in a project of its ow
 Password login with argon2id, sessions in SQLite, cookie `HttpOnly; Secure; SameSite=Strict`, 12 hour sessions.
 Cross-origin writes are refused by checking `Origin` and `Sec-Fetch-Site`. Strict CSP, no external resources, no
 inline scripts. All of this sits behind the VPN; the password is the second factor.
+
+## Agents
+
+`/mcp` on the interface host is the machine door: the same VPN-only listener, bearer tokens instead of the
+cookie. Tokens are created under Settings → Agents, shown once and stored as a SHA-256 hash; a request with a
+missing or unknown token is answered 401 after a delay and recorded (`agent.auth_failed` in the audit log, an
+`agent_auth_failed` event). Two scopes: `read` sees apps, logs, jobs and the server, `deploy` also changes compose
+files, secrets, routes and internet access and deploys, starts and stops. No token removes an app, restores,
+changes backups, upgrades or reboots, or touches VPN devices, ssh keys, registries, notifications or the account.
+Agent changes pass through the same validation as the interface and are audited as `agent:<name>`. Secret values
+are never returned; container and job logs are redacted as in the interface. A leaked token is worth exactly its
+scope on the VPN, and nothing off it; revoke it on the same page. The endpoint answers only for the interface
+host (and the listen address in dev mode); any other `Host` is refused with 403, which keeps a DNS-rebinding page in
+a browser from reaching it.
 
 ## Host
 

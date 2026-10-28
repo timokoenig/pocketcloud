@@ -1,4 +1,5 @@
 pub mod acme;
+pub mod actions;
 pub mod alerts;
 pub mod backup;
 pub mod caddy;
@@ -10,6 +11,7 @@ pub mod dns;
 pub mod docker;
 pub mod events;
 pub mod jobs;
+pub mod mcp;
 pub mod notify;
 pub mod reconcile;
 pub mod state;
