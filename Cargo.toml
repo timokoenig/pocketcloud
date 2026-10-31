@@ -1,6 +1,6 @@
 [package]
 name = "pocketcloud"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "Your own small cloud on one Hetzner server: hardened, WireGuard-only management, compose apps."
 license = "MIT"
