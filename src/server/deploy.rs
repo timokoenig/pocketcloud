@@ -114,7 +114,8 @@ async fn deploy_inner(state: &Shared, app: &db::App, log: &Log, pull: bool) -> R
             Err(e) => log.line(format!("could not pin images: {e:#}")).await,
         }
     }
-    // the network must exist before the firewall can name its bridge; up creates it
+    // the egress rules must be in place before the containers start: a new app was never in the firewall yet
+    reconcile::apply(state).await.context("firewall")?;
     let up = docker::compose(
         state,
         &app.name,

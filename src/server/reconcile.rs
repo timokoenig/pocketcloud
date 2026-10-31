@@ -61,7 +61,9 @@ pub async fn apply(state: &Shared) -> Result<()> {
     }
 
     // firewall
-    let bridges: Vec<(String, String)> = apps.iter().filter(|a| a.desired == "running").map(|a| (firewall::bridge_name(&a.name), a.egress.clone())).collect();
+    // every app, not only running ones: a deploy starts the containers before the app counts as running, and
+    // they may need the internet to become healthy. iifname matches by name, so a missing bridge is harmless.
+    let bridges: Vec<(String, String)> = apps.iter().map(|a| (firewall::bridge_name(&a.name), a.egress.clone())).collect();
     let wan = system::wan_interface().await?;
     let ruleset = firewall::render(&firewall::FirewallSpec { wan: &wan, vpn_port: state.config.vpn.port, bridges: &bridges });
     system::apply_nftables(&ruleset).await.context("apply nftables")?;
