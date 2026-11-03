@@ -284,7 +284,7 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
         let words: Vec<&str> = phrase.split_whitespace().collect();
         let mut positions: Vec<usize> = (0..24).collect();
         use rand::seq::SliceRandom;
-        positions.shuffle(&mut rand::thread_rng());
+        positions.shuffle(&mut rand::rng());
         for p in positions.iter().take(3) {
             loop {
                 let w: String = Input::with_theme(&theme()).with_prompt(format!("Word {}", p + 1)).interact_text()?;

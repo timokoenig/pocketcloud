@@ -17,6 +17,8 @@ use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {
     let args = cli::Cli::parse();
+    // reqwest has no TLS crypto backend of its own here; use ring, like ACME and SMTP do.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let default_level = if args.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level)))

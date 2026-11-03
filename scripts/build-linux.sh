@@ -10,8 +10,9 @@ image=ghcr.io/rust-cross/cargo-zigbuild:latest
 podman image exists "$image" || podman pull -q "$image" >/dev/null
 for t in "${targets[@]}"; do
   echo "building $t"
-  podman run --rm -v "$PWD":/io:Z -w /io -e CARGO_HOME=/io/.cargo-container "$image" \
-    cargo zigbuild --release --target "$t" --target-dir /io/target-linux
+  # the image's own Rust lags behind stable; keep a current toolchain next to the cargo cache instead
+  podman run --rm -v "$PWD":/io:Z -w /io -e CARGO_HOME=/io/.cargo-container -e RUSTUP_HOME=/io/.cargo-container/rustup "$image" \
+    sh -c "rustup toolchain install stable --profile minimal --target $t --no-self-update >/dev/null && cargo +stable zigbuild --release --target $t --target-dir /io/target-linux"
   cp "target-linux/$t/release/pocketcloud" "dist/pocketcloud-$t"
   ls -la "dist/pocketcloud-$t"
 done

@@ -1,6 +1,6 @@
 //! Docker: the compose CLI for lifecycle, the engine API for status and logs.
 use anyhow::{bail, Context, Result};
-use bollard::container::{ListContainersOptions, LogsOptions};
+use bollard::query_parameters::{ListContainersOptionsBuilder, LogsOptionsBuilder};
 use bollard::Docker;
 use futures_util::StreamExt;
 use serde::Serialize;
@@ -94,7 +94,7 @@ pub struct ContainerInfo {
 pub async fn containers_of(docker: &Docker, project: &str) -> Result<Vec<ContainerInfo>> {
     let mut filters = HashMap::new();
     filters.insert("label".to_string(), vec![format!("com.docker.compose.project={project}")]);
-    let list = docker.list_containers(Some(ListContainersOptions { all: true, filters, ..Default::default() })).await?;
+    let list = docker.list_containers(Some(ListContainersOptionsBuilder::new().all(true).filters(&filters).build())).await?;
     let mut out: Vec<ContainerInfo> = list
         .into_iter()
         .map(|c| {
@@ -112,7 +112,7 @@ pub async fn containers_of(docker: &Docker, project: &str) -> Result<Vec<Contain
             ContainerInfo {
                 id: c.id.unwrap_or_default(),
                 service: labels.get("com.docker.compose.service").cloned().unwrap_or_default(),
-                state: c.state.unwrap_or_default(),
+                state: c.state.map(|s| s.to_string()).unwrap_or_default(),
                 status,
                 image: c.image.unwrap_or_default(),
                 health: health.into(),
@@ -142,7 +142,7 @@ pub async fn image_digests(docker: &Docker, project: &str) -> Vec<String> {
 }
 
 pub async fn logs(docker: &Docker, container_id: &str, tail: usize) -> Result<String> {
-    let opts = LogsOptions::<String> { stdout: true, stderr: true, tail: tail.to_string(), timestamps: true, ..Default::default() };
+    let opts = LogsOptionsBuilder::new().stdout(true).stderr(true).tail(&tail.to_string()).timestamps(true).build();
     let mut stream = docker.logs(container_id, Some(opts));
     let mut out = String::new();
     while let Some(item) = stream.next().await {
@@ -159,7 +159,7 @@ pub async fn logs(docker: &Docker, container_id: &str, tail: usize) -> Result<St
 
 /// Running containers that belong to no compose project: nothing pocketcloud started.
 pub async fn foreign_containers(docker: &Docker) -> Vec<String> {
-    let Ok(list) = docker.list_containers(Some(ListContainersOptions::<String> { all: false, ..Default::default() })).await else { return vec![] };
+    let Ok(list) = docker.list_containers(Some(ListContainersOptionsBuilder::new().all(false).build())).await else { return vec![] };
     list.into_iter()
         .filter(|c| !c.labels.as_ref().map(|l| l.contains_key("com.docker.compose.project")).unwrap_or(false))
         .map(|c| c.names.unwrap_or_default().first().map(|n| n.trim_start_matches('/').to_string()).unwrap_or_default())

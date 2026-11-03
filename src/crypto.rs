@@ -1,10 +1,9 @@
 //! Master key, recovery phrase, authenticated encryption of stored secrets, password hashing.
 use anyhow::{anyhow, Context, Result};
-use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use rand::RngCore;
 use zeroize::Zeroizing;
 
 pub const KEY_LEN: usize = 32;
@@ -17,7 +16,7 @@ pub struct MasterKey(Zeroizing<[u8; KEY_LEN]>);
 impl MasterKey {
     pub fn generate() -> Self {
         let mut k = [0u8; KEY_LEN];
-        rand::thread_rng().fill_bytes(&mut k);
+        rand::fill(&mut k);
         MasterKey(Zeroizing::new(k))
     }
 
@@ -72,8 +71,8 @@ impl MasterKey {
     pub fn seal(&self, plaintext: &[u8]) -> Vec<u8> {
         let cipher = XChaCha20Poly1305::new((&*self.0).into());
         let mut nonce = [0u8; 24];
-        rand::thread_rng().fill_bytes(&mut nonce);
-        let ct = cipher.encrypt(XNonce::from_slice(&nonce), plaintext).expect("encrypt");
+        rand::fill(&mut nonce);
+        let ct = cipher.encrypt(&XNonce::from(nonce), plaintext).expect("encrypt");
         let mut out = Vec::with_capacity(24 + ct.len());
         out.extend_from_slice(&nonce);
         out.extend_from_slice(&ct);
@@ -86,7 +85,7 @@ impl MasterKey {
         }
         let cipher = XChaCha20Poly1305::new((&*self.0).into());
         let pt = cipher
-            .decrypt(XNonce::from_slice(&sealed[..24]), &sealed[24..])
+            .decrypt(&XNonce::try_from(&sealed[..24]).expect("24-byte nonce"), &sealed[24..])
             .map_err(|_| anyhow!("decryption failed: wrong master key or corrupt value"))?;
         Ok(Zeroizing::new(pt))
     }
@@ -98,9 +97,8 @@ impl MasterKey {
 }
 
 pub fn hash_password(password: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
     Ok(Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map_err(|e| anyhow!("hash password: {e}"))?
         .to_string())
 }
@@ -114,7 +112,7 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
 
 pub fn random_token(bytes: usize) -> String {
     let mut b = vec![0u8; bytes];
-    rand::thread_rng().fill_bytes(&mut b);
+    rand::fill(&mut b);
     hex::encode(b)
 }
 
@@ -152,5 +150,20 @@ mod tests {
         let h = hash_password("pw").unwrap();
         assert!(verify_password("pw", &h));
         assert!(!verify_password("no", &h));
+    }
+
+    /// Values written by earlier releases (and their crate versions) must still read back after dependency upgrades.
+    #[test]
+    fn stored_values_from_earlier_releases() {
+        let k = MasterKey::from_bytes(&[7u8; 32]).unwrap();
+        let phrase = "alpha deal scrub asthma idea logic bright thought alpha deal scrub asthma idea logic bright thought alpha deal scrub asthma idea logic bright truly";
+        assert_eq!(*k.phrase(), phrase);
+        assert_eq!(*MasterKey::from_phrase(phrase).unwrap().to_hex(), *k.to_hex());
+        let sealed = hex::decode("5338304c87256729835ee378ecdacb1fc172066fad98b1190f1702c0f9aeabfbb5cd1fa883afd979b321f25183417ef2ec31fcc2").unwrap();
+        assert_eq!(&*k.open(&sealed).unwrap(), b"hello secret");
+        let hash = "$argon2id$v=19$m=19456,t=2,p=1$Ngk2ySOdztz+CQoZVdZCyA$F25T9XZNWuiqy6dJKm9tSPqhfoQCK2mEWc8CwGKqRYM";
+        assert!(verify_password("correct horse", hash));
+        assert!(!verify_password("wrong horse", hash));
+        assert!(hash_password("pw").unwrap().starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
     }
 }

@@ -1,7 +1,6 @@
 //! WireGuard keys and config rendering. The hub runs on the server as wg0, every client is a peer.
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 
@@ -58,7 +57,7 @@ pub struct KeyPair {
 }
 
 pub fn generate_keypair() -> KeyPair {
-    let secret = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+    let secret = x25519_dalek::StaticSecret::random();
     let public = x25519_dalek::PublicKey::from(&secret);
     KeyPair { private: B64.encode(secret.to_bytes()), public: B64.encode(public.to_bytes()) }
 }
@@ -72,7 +71,7 @@ pub fn public_key_of(private: &str) -> Result<String> {
 
 pub fn generate_psk() -> String {
     let mut b = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut b);
+    rand::fill(&mut b);
     B64.encode(b)
 }
 

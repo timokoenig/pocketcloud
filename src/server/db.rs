@@ -156,7 +156,7 @@ const SCHEMA: &[&str] = &[
 
 async fn migrate(db: &Db) -> Result<()> {
     for stmt in SCHEMA {
-        sqlx::query(stmt).execute(db).await.with_context(|| format!("schema: {stmt}"))?;
+        sqlx::query(*stmt).execute(db).await.with_context(|| format!("schema: {stmt}"))?;
     }
     // columns added after the first release
     let cols: Vec<(i64, String)> = sqlx::query_as("SELECT cid, name FROM pragma_table_info('routes')").fetch_all(db).await?;

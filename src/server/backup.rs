@@ -203,7 +203,9 @@ async fn run_inner(state: &State, log: &Log) -> Result<()> {
     std::fs::create_dir_all(&stage)?;
     crate::install::set_mode(&stage, 0o700)?;
     let db_copy = stage.join("pocketcloud.db");
-    sqlx::query(&format!("VACUUM INTO '{}'", db_copy.display())).execute(&state.db).await.context("copy database")?;
+    // VACUUM INTO takes no bind parameter; the path comes from our own config, quotes escaped.
+    let vacuum = format!("VACUUM INTO '{}'", db_copy.display().to_string().replace('\'', "''"));
+    sqlx::query(sqlx::AssertSqlSafe(vacuum)).execute(&state.db).await.context("copy database")?;
     if let Err(e) = std::fs::copy("/etc/pocketcloud/config.toml", stage.join("config.toml")) {
         log.line(format!("config.toml not copied: {e}")).await;
     }

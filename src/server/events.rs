@@ -244,13 +244,13 @@ fn healthcheck_command(test: &[String], shell: &[String]) -> Option<String> {
 
 /// Docker events: containers dying, OOM kills, health changes; by compose project and service.
 pub async fn docker_events(state: Shared) -> Result<()> {
-    use bollard::system::EventsOptions;
+    use bollard::query_parameters::EventsOptionsBuilder;
     use futures_util::StreamExt;
     let docker = state.docker.clone().context("docker not available")?;
     loop {
         let mut filters = std::collections::HashMap::new();
         filters.insert("type".to_string(), vec!["container".to_string()]);
-        let mut stream = docker.events(Some(EventsOptions::<String> { filters, ..Default::default() }));
+        let mut stream = docker.events(Some(EventsOptionsBuilder::new().filters(&filters).build()));
         while let Some(ev) = stream.next().await {
             let Ok(ev) = ev else { break };
             let action = ev.action.clone().unwrap_or_default();
