@@ -58,8 +58,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: goto-bus-stop/setup-zig@v2
-      - run: cargo install cargo-zigbuild
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+          use-cache: true
+      - run: cargo install cargo-zigbuild --version 0.24.0 --locked
       - run: cargo zigbuild --release --target ${{ matrix.target }}
       - run: cp target/${{ matrix.target }}/release/pocketcloud pocketcloud-${{ matrix.target }}
       - run: sha256sum pocketcloud-${{ matrix.target }} > pocketcloud-${{ matrix.target }}.sha256
