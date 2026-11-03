@@ -1,10 +1,11 @@
 //! Tear the installation down from the interface. The recovery phrase is the proof (checked by the handler);
-//! then every app goes with its volumes, optionally the DNS records and the cloud resources (tokens used once,
+//! then every app goes with its volumes, optionally the DNS records (Hetzner DNS) and the cloud resources (tokens used once,
 //! never stored), and a transient unit outside the daemon's sandbox wipes the server's own state including the
 //! master key and powers the machine off. Backup snapshots in the bucket are left alone.
 use anyhow::{Context, Result};
 
-use crate::hetzner::{relative_name, Hetzner};
+use crate::dnsrecords;
+use crate::hetzner::Hetzner;
 use crate::server::jobs::Log;
 use crate::server::state::Shared;
 use crate::server::{db, deploy, notify, system};
@@ -51,10 +52,25 @@ pub async fn teardown_job(state: Shared, tokens: Tokens, log: Log) -> Result<()>
         }
     }
 
-    if let Some(t) = tokens.dns.as_deref().or(tokens.cloud.as_deref()) {
-        delete_dns(&state, &Hetzner::new(t), &log).await;
-    } else {
-        log.line("no DNS token: remove the records of the domain in the Hetzner console yourself").await;
+    // the records setup wrote, as far as they still point at this server; with another DNS provider the
+    // owner deletes them, so the job lists them
+    let ips = state.public_ips.read().await.clone();
+    match tokens.dns.as_deref().or(tokens.cloud.as_deref()) {
+        Some(t) => {
+            for line in dnsrecords::remove(&Hetzner::new(t), &state.config.domains, &ips).await {
+                log.line(format!("dns: {line}")).await;
+            }
+        }
+        None => {
+            log.line("no Hetzner DNS token: delete these records at your DNS provider yourself:").await;
+            let v4 = ips.iter().find(|ip| ip.parse::<std::net::IpAddr>().is_ok_and(|a| a.is_ipv4())).cloned();
+            let v6 = ips.iter().find(|ip| ip.parse::<std::net::IpAddr>().is_ok_and(|a| a.is_ipv6())).cloned();
+            for d in &state.config.domains {
+                for r in dnsrecords::plan_domain(d, v4.as_deref(), v6.as_deref()) {
+                    log.line(format!("  {r}")).await;
+                }
+            }
+        }
     }
 
     let cloud = tokens.cloud.as_deref().map(Hetzner::new);
@@ -75,45 +91,6 @@ pub async fn teardown_job(state: Shared, tokens: Tokens, log: Log) -> Result<()>
         _ => log.line("delete the powered-off server in the Hetzner console; its disk holds nothing usable").await,
     }
     Ok(())
-}
-
-/// The records setup wrote, as far as they still point at this server.
-async fn delete_dns(state: &Shared, dns: &Hetzner, log: &Log) {
-    let ips = state.public_ips.read().await.clone();
-    for d in &state.config.domains {
-        let zone = match dns.zone_for(d).await {
-            Ok(z) => z,
-            Err(e) => {
-                log.line(format!("dns: {d}: {e:#}")).await;
-                continue;
-            }
-        };
-        let rel = |h: &str| relative_name(h, &zone.name);
-        for host in [d.clone(), format!("*.{d}"), format!("acme-ns.{d}")] {
-            for rtype in ["A", "AAAA"] {
-                let Ok(Some(set)) = dns.rrset(&zone.name, &rel(&host), rtype).await else { continue };
-                if !set.records.iter().all(|r| ips.contains(&r.value)) {
-                    log.line(format!("dns: {host} {rtype} points elsewhere, left alone")).await;
-                    continue;
-                }
-                report(log, &format!("{host} {rtype}"), dns.rrset_delete(&zone.name, &rel(&host), rtype).await).await;
-            }
-        }
-        let challenge = format!("_acme-challenge.{d}");
-        report(log, &format!("{challenge} NS"), dns.rrset_delete(&zone.name, &rel(&challenge), "NS").await).await;
-        if let Ok(Some(caa)) = dns.rrset(&zone.name, &rel(d), "CAA").await {
-            if caa.records.len() == 1 && caa.records[0].value.contains("letsencrypt.org") {
-                report(log, &format!("{d} CAA"), dns.rrset_delete(&zone.name, &rel(d), "CAA").await).await;
-            }
-        }
-    }
-}
-
-async fn report(log: &Log, what: &str, r: Result<()>) {
-    match r {
-        Ok(()) => log.line(format!("dns: removed {what}")).await,
-        Err(e) => log.line(format!("dns: {what}: {e:#}")).await,
-    }
 }
 
 /// Firewall and ssh key now, the server itself last (after the wipe is scheduled); returns the server's id.

@@ -165,40 +165,6 @@ log "pocketcloud files"
 install -m 0755 "$STAGE/pocketcloud" /usr/local/bin/pocketcloud.new
 mv -f /usr/local/bin/pocketcloud.new /usr/local/bin/pocketcloud
 [[ -f "$STAGE/config.toml" ]] && install -m 0600 "$STAGE/config.toml" /etc/pocketcloud/config.toml
-# the server needs no Hetzner credential at all any more: it answers the certificate challenge itself
-if grep -q '^\[hetzner\]' /etc/pocketcloud/config.toml 2>/dev/null; then
-  python3 - /etc/pocketcloud/config.toml <<'EOF'
-import sys
-p = sys.argv[1]; out = []; skip = False
-for line in open(p).read().splitlines():
-    t = line.strip()
-    if t == "[hetzner]":
-        skip = True
-        continue
-    if skip and t.startswith("["):
-        skip = False
-    if not skip:
-        out.append(line)
-open(p, "w").write("\n".join(out).rstrip() + "\n")
-EOF
-  log "removed the DNS token from the server config"
-fi
-if false; then
-  python3 - /etc/pocketcloud/config.toml <<'EOF'
-import re, sys
-p = sys.argv[1]; s = open(p).read()
-m = re.search(r'^token = (".*")$', s, re.M); d = re.search(r'^dns_token = "(.*)"$', s, re.M)
-if m:
-    if d is None or d.group(1) == "":
-        s = re.sub(r'^dns_token = "".*\n', '', s, flags=re.M)
-        s = s.replace(m.group(0), "dns_token = " + m.group(1), 1)
-    else:
-        s = s.replace(m.group(0) + "\n", "", 1)
-    s = re.sub(r'^(server_id|firewall_id) = .*\n', '', s, flags=re.M)
-    open(p, "w").write(s)
-EOF
-  log "removed the cloud token from the server config"
-fi
 [[ -f "$STAGE/master.key" ]] && install -m 0600 "$STAGE/master.key" /etc/pocketcloud/master.key
 sed "s/\${SSH_USER}/${SSH_USER:-admin}/" "$STAGE/units/pocketcloud.service" > "$STAGE/units/pocketcloud.rendered"
 install -m 0644 "$STAGE/units/pocketcloud.rendered" /etc/systemd/system/pocketcloud.service

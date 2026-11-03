@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::cli::SetupArgs;
 use crate::crypto::{self, MasterKey};
 use crate::hetzner::{FirewallRule, Hetzner};
-use crate::install::{self, Installation, Step};
+use crate::install::{self, DnsProvider, Installation, Step};
 use crate::remote::{self, Ssh};
 use crate::wireguard;
 
@@ -86,7 +86,9 @@ pub async fn run(args: SetupArgs) -> Result<()> {
     let hetzner = Hetzner::new(&secrets.hetzner_token);
 
     if inst.step == Step::Planned {
-        create(&mut inst, &hetzner, &Hetzner::new(&secrets.dns_token), &args).await?;
+        // with another provider there is no DNS token; the records are created by hand
+        let dns = (inst.dns == DnsProvider::Hetzner).then(|| Hetzner::new(&secrets.dns_token));
+        create(&mut inst, &hetzner, dns.as_ref(), &args).await?;
         inst.step = Step::Created;
         inst.save()?;
     }
@@ -154,29 +156,54 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
     hetzner.check_token().await.context("the token was rejected")?;
     ok("token works");
 
-    let separate = Confirm::with_theme(&theme()).with_prompt("Are the DNS zones in a different Hetzner project?").default(false).interact()?;
-    let dns_token = if separate {
-        let t: String = Password::with_theme(&theme()).with_prompt("API token of the DNS project").interact()?;
-        Hetzner::new(&t).check_token().await.context("the DNS token was rejected")?;
-        t
-    } else {
-        hetzner_token.clone()
+    step("DNS");
+    let providers = [
+        "Hetzner DNS, in the project of the server",
+        "Hetzner DNS, in another Hetzner project",
+        "Another provider (Cloudflare, Route 53, the registrar, …): you create the records, setup checks them",
+    ];
+    let pi = Select::with_theme(&theme()).with_prompt("Where are the DNS zones of your domains?").items(providers).default(0).interact()?;
+    let (dns, dns_token) = match pi {
+        0 => (Some(hetzner.clone()), hetzner_token.clone()),
+        1 => {
+            let t: String = Password::with_theme(&theme()).with_prompt("API token of the DNS project").interact()?;
+            Hetzner::new(&t).check_token().await.context("the DNS token was rejected")?;
+            (Some(Hetzner::new(&t)), t)
+        }
+        _ => {
+            info("the provider must allow an NS record on a subdomain (_acme-challenge); Cloudflare, Route 53 and most registrars do");
+            (None, String::new())
+        }
     };
-    let dns = Hetzner::new(&dns_token);
-    let zones = dns.zones().await.context("list DNS zones")?;
-    if zones.is_empty() {
-        bail!("the DNS project has no zones; create the zone of your domain in the Hetzner console first");
+    let mut zones = Vec::new();
+    if let Some(dns) = &dns {
+        zones = dns.zones().await.context("list DNS zones")?;
+        if zones.is_empty() {
+            bail!("the DNS project has no zones; create the zone of your domain in the Hetzner console first");
+        }
+        info(&format!("zones: {}", zones.iter().map(|z| z.name.as_str()).collect::<Vec<_>>().join(", ")));
     }
-    info(&format!("zones: {}", zones.iter().map(|z| z.name.as_str()).collect::<Vec<_>>().join(", ")));
 
     step("Domains");
     let domains: String = Input::with_theme(&theme())
         .with_prompt("Domains that get a wildcard certificate (comma separated, e.g. example.com, staging.example.com)")
-        .default(zones[0].name.clone())
+        .default(zones.first().map(|z| z.name.clone()).unwrap_or_default())
+        .validate_with(|s: &String| -> Result<(), String> {
+            let ds: Vec<&str> = s.split(',').map(|d| d.trim().trim_end_matches('.')).filter(|d| !d.is_empty()).collect();
+            if ds.is_empty() {
+                return Err("at least one domain".into());
+            }
+            match ds.iter().find(|d| !valid_domain(d)) {
+                Some(d) => Err(format!("{d} is not a domain name")),
+                None => Ok(()),
+            }
+        })
         .interact_text()?;
     let domains: Vec<String> = domains.split(',').map(|d| d.trim().trim_end_matches('.').to_lowercase()).filter(|d| !d.is_empty()).collect();
-    for d in &domains {
-        dns.zone_for(d).await?;
+    if let Some(dns) = &dns {
+        for d in &domains {
+            dns.zone_for(d).await?;
+        }
     }
     let interface_host: String = Input::with_theme(&theme())
         .with_prompt("Host name of the interface")
@@ -235,7 +262,10 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
     println!("  firewall    inbound 80, 443, {vpn_port}/udp, icmp; ssh 22 only from your address while setting up");
     println!("  domains     {}", domains.join(", "));
     println!("  interface   https://{interface_host} (VPN only)");
-    println!("  dns         {} and *.{} → server; _acme-challenge delegated to the server (no DNS token on it)", domains.join(", "), domains.join(", *."));
+    match &dns {
+        Some(_) => println!("  dns         {} and *.{} → server; _acme-challenge delegated to the server (no DNS token on it)", domains.join(", "), domains.join(", *.")),
+        None => println!("  dns         printed once the server has an address; you create the records, setup checks them before it continues"),
+    }
     println!("  ssh         user {ssh_user}, key only, via VPN after setup");
     println!("  afterwards  backups, alerts, Falco and apps are configured in the interface");
     if !args.yes && !Confirm::with_theme(&theme()).with_prompt("Create this?").default(true).interact()? {
@@ -330,7 +360,7 @@ async fn plan(inst: &mut Installation, args: &SetupArgs) -> Result<(Secrets, Mas
     install::write_private(&inst.vpn_config_path()?, &client)?;
     inst.domains = domains;
     inst.hetzner.server_name = resource_name(&inst.name);
-    inst.hetzner.dns_separate_project = separate;
+    inst.dns = if dns.is_some() { DnsProvider::Hetzner } else { DnsProvider::Manual };
     inst.server = install::ServerInfo { ipv4: None, ipv6: None, location, server_type: server_type.name.clone(), ssh_user, interface_host };
     let _ = dir;
     Ok((Secrets { hetzner_token, dns_token, server_config }, master))
@@ -423,10 +453,19 @@ mod tests {
         });
         let c: crate::server::config::Config = toml::from_str(&s).unwrap();
         assert_eq!(c.domains.len(), 2);
-        assert!(c.hetzner.dns_token.is_empty(), "no DNS token on the server");
         assert_eq!(c.vpn.initial_peer.unwrap().ip, "10.8.0.2");
         assert_eq!(c.acme.environment, "staging");
         assert!(c.bootstrap_user.is_some());
+    }
+
+    #[test]
+    fn domain_names() {
+        assert!(valid_domain("example.com"));
+        assert!(valid_domain("staging.example.co.uk"));
+        assert!(!valid_domain("localhost"));
+        assert!(!valid_domain("exa mple.com"));
+        assert!(!valid_domain("-bad.com"));
+        assert!(!valid_domain("example..com"));
     }
 
     #[test]
@@ -453,7 +492,7 @@ pub fn firewall_rules(vpn_port: u16, ssh_from: Option<&str>) -> Vec<FirewallRule
     rules
 }
 
-async fn create(inst: &mut Installation, hetzner: &Hetzner, dns: &Hetzner, _args: &SetupArgs) -> Result<()> {
+async fn create(inst: &mut Installation, hetzner: &Hetzner, dns: Option<&Hetzner>, args: &SetupArgs) -> Result<()> {
     step("Creating resources");
     let name = resource_name(&inst.name);
     let labels = labels(&inst.name);
@@ -500,17 +539,70 @@ async fn create(inst: &mut Installation, hetzner: &Hetzner, dns: &Hetzner, _args
     inst.save()?;
     ok(&format!("server {name} #{} at {}", server.id, inst.server.ipv4.clone().unwrap_or_default()));
 
-    // public records, from here with the DNS token; the server answers the certificate challenge itself
-    for l in crate::dnsrecords::apply(dns, &inst.domains, inst.server.ipv4.as_deref(), inst.server.ipv6.as_deref()).await? {
-        info(&l);
+    // public records, from here with the DNS token or by hand; the server answers the certificate challenge itself
+    match dns {
+        Some(dns) => {
+            for l in crate::dnsrecords::apply(dns, &inst.domains, inst.server.ipv4.as_deref(), inst.server.ipv6.as_deref()).await? {
+                info(&l);
+            }
+            ok("dns records written");
+        }
+        None => manual_dns(inst, args).await?,
     }
-    ok("dns records written");
 
     // complete the local client config with the address
     let path = inst.vpn_config_path()?;
     let conf = std::fs::read_to_string(&path)?.replace("SERVER_IP", inst.server.ipv4.as_deref().unwrap_or(""));
     install::write_private(&path, &conf)?;
     Ok(())
+}
+
+/// Another DNS provider: print the records, let the owner create them, then ask the zone's own nameservers
+/// until they are all there. Setup saved the server before this, so a stop here continues at the same place.
+async fn manual_dns(inst: &Installation, args: &SetupArgs) -> Result<()> {
+    step("DNS records");
+    let records = crate::dnsrecords::plan(&inst.domains, inst.server.ipv4.as_deref(), inst.server.ipv6.as_deref())?;
+    println!("  Create these records at your DNS provider, as plain DNS (on Cloudflare: not proxied):\n");
+    print!("{}", crate::dnsrecords::table(&records));
+    println!();
+    println!("  NS   delegates the certificate challenge to the server; remove any TXT record at that name.");
+    println!("  CAA  only if the domain has none yet; one that exists must allow letsencrypt.org.");
+    println!("  Some provider panels want the name relative to the zone (@ for the domain itself) and the NS value with its trailing dot.\n");
+    let started = std::time::Instant::now();
+    loop {
+        if !args.yes && !Confirm::with_theme(&theme()).with_prompt("Check the records now?").default(true).interact()? {
+            bail!("run setup again once the records exist; it continues here");
+        }
+        info("asking the zone's nameservers");
+        match crate::dnsrecords::check(&inst.domains, &records).await {
+            Ok(problems) if problems.is_empty() => {
+                ok("every record is in place at the zone's nameservers");
+                return Ok(());
+            }
+            Ok(problems) => {
+                for p in problems {
+                    println!("  {} {p}", style("✗").red());
+                }
+            }
+            Err(e) => println!("  {} {e:#}", style("✗").red()),
+        }
+        if args.yes {
+            if started.elapsed() > Duration::from_secs(3600) {
+                bail!("the records did not appear within an hour; run setup again once they exist");
+            }
+            info("checking again in 20 seconds (ctrl-c to stop and continue later)");
+            tokio::time::sleep(Duration::from_secs(20)).await;
+        }
+    }
+}
+
+/// Labels of letters, digits and dashes, at least two of them.
+fn valid_domain(d: &str) -> bool {
+    let labels: Vec<&str> = d.split('.').collect();
+    labels.len() >= 2
+        && labels.iter().all(|l| {
+            !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-') && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
 }
 
 async fn wait_for_ssh(ssh: &Ssh) -> Result<()> {

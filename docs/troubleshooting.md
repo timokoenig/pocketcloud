@@ -9,9 +9,8 @@ the way in (see "Every device is gone"). ssh works over the VPN with a key added
 Symptom: WireGuard shows a handshake and traffic both ways, `dig @10.8.0.1 pocketcloud.<domain>` answers
 `10.8.0.1`, but the browser and `curl` time out resolving the name. Other names resolve fine.
 
-Cause: macOS consults per-domain resolvers before anything else. A file `/etc/resolver/<domain>` (often left behind
-by another project that used the same domain, for example a cluster whose internal DNS lived on a private
-address) sends every query for that domain to a nameserver that no longer exists. `scutil --dns` lists it as a
+Cause: macOS consults per-domain resolvers before anything else. A file `/etc/resolver/<domain>` (left behind by
+an earlier tool that used the same domain) sends every query for that domain to a nameserver that no longer exists. `scutil --dns` lists it as a
 resolver with `domain : <your domain>`.
 
 ```sh
@@ -49,6 +48,17 @@ the tunnel while you fix the server, or use the Hetzner console.
   `/var/lib/pocketcloud/certs/<domain>/fullchain.pem`, then `sudo systemctl restart pocketcloud`.
 - `acme: ... challenge nameserver did not answer` or the order times out: the `_acme-challenge` delegation is
   missing or port 53 is closed, see "Certificates are not renewed" below.
+
+
+## Setup says a DNS record is missing although you created it
+
+With a zone at another provider, setup asks the zone's own nameservers, not a cache, so a record normally shows up
+within a minute of saving it. Check the name: `*.example.com` and `acme-ns.example.com` are separate records, and
+many panels want names relative to the zone (`@`, `*`, `acme-ns`, `_acme-challenge`). The NS value needs the
+trailing dot where the panel distinguishes it. `_acme-challenge` must be an NS record, not a TXT record; a provider
+that does not allow NS records on a subdomain cannot host this zone. Some networks intercept port 53 and answer
+from their own cache; from such a network the check may lag behind by the cached TTL, so try again a few minutes
+later or from another network.
 
 ## Setup stopped half way
 

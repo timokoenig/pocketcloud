@@ -136,12 +136,13 @@ which is the proof of ownership (the master key never leaves the server, so only
 the installation name. Then, as a job you can watch until the tunnel drops: a critical notification goes out
 first; every app is removed with its volumes; with a Hetzner DNS token the records setup wrote (the domain and
 wildcard, `acme-ns`, the `_acme-challenge` delegation, the CAA record) are deleted, as far as they still point at
-this server; with a Hetzner Cloud token the firewall and ssh key are deleted and, last of all, the server itself.
+this server, and with the zone at another provider the job lists them for you to delete; with a Hetzner Cloud
+token the firewall and ssh key are deleted and, last of all, the server itself.
 Independent of the tokens, a transient unit outside the daemon's sandbox then shreds the master key, deletes
 `/etc/pocketcloud`, `/var/lib/pocketcloud`, the WireGuard and Caddy configuration, and powers the machine off.
 
 Tokens are used once in memory and never stored; revoke them afterwards. Without them, delete the powered-off
-server and the DNS records in the Hetzner console; the disk holds nothing usable. Backup snapshots stay in the
+server in the Hetzner console and the DNS records at your provider; the disk holds nothing usable. Backup snapshots stay in the
 bucket, and the recovery phrase plus the bucket credentials still restore them into a new installation.
 
 ## What lives on your laptop
@@ -154,8 +155,10 @@ server or, from Hetzner's rescue system, to recover one. Keep the recovery phras
 Certificates renew inside the daemon, which also runs the challenge nameserver; *Renew now* on the Server page
 and `sudo pocketcloud server renew` only ask it to.
 
-The real zone is written once, by setup. The server answers `_acme-challenge.<domain>` itself for certificate
-renewals and holds no DNS token. A rebuilt server gets its records from the setup that builds it.
+The real zone is written once, by setup: through the API with Hetzner DNS, by hand with any other provider
+([setup](setup.md)). The server answers `_acme-challenge.<domain>` itself for certificate renewals and holds no
+DNS token. A rebuilt server gets its records from the setup that builds it; with another provider that means
+updating the address records to the new server when setup prints them.
 
 ## Updates
 

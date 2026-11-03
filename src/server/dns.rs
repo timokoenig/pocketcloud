@@ -1,5 +1,5 @@
 //! The VPN resolver on 10.8.0.1:53: internal names answer with the hub address, everything else is forwarded.
-//! Also a tiny client used to watch ACME challenge records.
+//! Also a tiny client, used to watch ACME challenge records and by setup to check records at a foreign provider.
 use anyhow::{anyhow, Context, Result};
 use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
 use hickory_proto::rr::{rdata, Name, RData, Record, RecordType};
@@ -85,18 +85,23 @@ async fn forward(query: &[u8], upstreams: &[SocketAddr]) -> Option<Vec<u8>> {
     None
 }
 
-/// TXT values of `name` as answered by `server`.
-pub async fn query_txt(server: SocketAddr, name: &str) -> Result<Vec<String>> {
+/// One UDP query to `server`: the whole response, so callers can read answers as well as a referral.
+pub async fn query(server: SocketAddr, name: &str, rt: RecordType, recursion: bool) -> Result<Message> {
     let mut msg = Message::new(rand::random(), MessageType::Query, OpCode::Query);
-    msg.metadata.recursion_desired = false;
-    msg.add_query(hickory_proto::op::Query::query(Name::from_utf8(name)?, RecordType::TXT));
-    let sock = UdpSocket::bind("0.0.0.0:0").await?;
+    msg.metadata.recursion_desired = recursion;
+    msg.add_query(hickory_proto::op::Query::query(Name::from_utf8(name)?, rt));
+    let sock = UdpSocket::bind(if server.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" }).await?;
     sock.send_to(&msg.to_bytes()?, server).await?;
     let mut buf = vec![0u8; 4096];
     let (n, _) = tokio::time::timeout(Duration::from_secs(5), sock.recv_from(&mut buf))
         .await
         .map_err(|_| anyhow!("dns timeout from {server}"))??;
-    let resp = Message::from_bytes(&buf[..n])?;
+    Ok(Message::from_bytes(&buf[..n])?)
+}
+
+/// TXT values of `name` as answered by `server`.
+pub async fn query_txt(server: SocketAddr, name: &str) -> Result<Vec<String>> {
+    let resp = query(server, name, RecordType::TXT, false).await?;
     let mut out = Vec::new();
     for a in &resp.answers {
         if let RData::TXT(t) = &a.data {
@@ -105,7 +110,6 @@ pub async fn query_txt(server: SocketAddr, name: &str) -> Result<Vec<String>> {
     }
     Ok(out)
 }
-
 
 // ---------------------------------------------------------------------------------------------------------------
 // The public challenge nameserver: `_acme-challenge.<domain>` is delegated to this server (NS acme-ns.<domain>),

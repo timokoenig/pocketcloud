@@ -14,7 +14,7 @@
 <div class="section danger-zone" id="teardown">
   <div class="group-title text-danger">Danger zone</div>
   <div class="section-head">
-    <div><h2 class="section-title text-danger">Tear down {{ base.name }}</h2><p class="section-desc">Removes every app with its volumes, wipes the server's state and master key, and powers it off. With a Hetzner token it also deletes the DNS records, the firewall, the ssh key and the server itself; tokens are used once and never stored. Backup snapshots in the bucket stay.</p></div>
+    <div><h2 class="section-title text-danger">Tear down {{ base.name }}</h2><p class="section-desc">Removes every app with its volumes, wipes the server's state and master key, and powers it off. With a Hetzner token it also deletes the DNS records, the firewall, the ssh key and the server itself; tokens are used once and never stored. With another DNS provider the job lists the records to delete. Backup snapshots in the bucket stay.</p></div>
     <div class="actions">
       <details class="dialog">
         <summary class="btn btn-sm btn-danger">Tear down {{ base.name }}…</summary>
@@ -27,7 +27,7 @@
                 <label class="field"><span>Hetzner Cloud token <span class="hint">optional</span></span><textarea name="cloud_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
                 <label class="field"><span>Hetzner DNS token <span class="hint">optional</span></span><textarea name="dns_token" class="secret" rows="1" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore></textarea></label>
               </div>
-              <p class="hint">The cloud token also deletes server, firewall and key; the DNS token defaults to the cloud token.</p>
+              <p class="hint">The cloud token also deletes server, firewall and key; the DNS token defaults to the cloud token. Leave it empty when the zone is not at Hetzner DNS.</p>
               <label class="field"><span>Type <code>{{ base.name }}</code> to confirm</span><input name="confirm" required autocomplete="off"></label>
             </div>
             <div class="dialog-foot"><div class="end"><button type="button" class="btn btn-ghost" data-close>Cancel</button><button class="btn btn-destructive">Tear down</button></div></div>

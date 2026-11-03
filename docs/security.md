@@ -113,7 +113,7 @@ a browser from reaching it.
 
 ## Host
 
-The cloud-init and installer apply the same hardening as the k3s template: hardened sshd ciphers and limits, sysctl
+The cloud-init and installer harden the host: hardened sshd ciphers and limits, sysctl
 hardening, fail2ban in aggressive mode, unattended security upgrades, auditd rules on identity and privileged
 execution, AIDE with a nightly check, persistent journald. The daemon runs as root (it drives Docker, nftables and
 WireGuard) under systemd confinement: no new privileges, protected home, kernel tunables, logs and cgroups.

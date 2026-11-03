@@ -18,6 +18,19 @@ pub struct Installation {
     pub vpn: Vpn,
     #[serde(default)]
     pub domains: Vec<String>,
+    /// Who holds the zones of the domains, and therefore how the public records get written
+    #[serde(default)]
+    pub dns: DnsProvider,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DnsProvider {
+    /// Hetzner DNS, written through the API with the DNS token (the cloud token or that of another project)
+    #[default]
+    Hetzner,
+    /// Any other provider: setup prints the records, the owner creates them, setup checks them
+    Manual,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -38,8 +51,6 @@ pub struct Hetzner {
     pub server_name: String,
     pub firewall_id: Option<i64>,
     pub ssh_key_id: Option<i64>,
-    /// Zones of the domains live in another project when set
-    pub dns_separate_project: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

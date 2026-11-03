@@ -46,6 +46,8 @@ target/release/pocketcloud setup mycloud --server-binary dist/pocketcloud-aarch6
 
 Setup asks for the Hetzner token, domains, server type and the interface login, shows the recovery phrase once,
 creates the server, installs everything, waits until your WireGuard tunnel works and only then closes public SSH.
+The DNS zone can be at Hetzner DNS, where setup writes the records itself, or at any other provider, where setup
+prints them and checks them once you have created them.
 Afterwards open `https://pocketcloud.<domain>` with the tunnel active.
 
 Without `--server-binary`, setup downloads the release matching its own version from GitHub.
