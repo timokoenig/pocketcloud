@@ -101,7 +101,9 @@ if [[ -f "$STAGE/caddy" ]]; then
   update-alternatives --quiet --install /usr/bin/caddy caddy /usr/bin/caddy.default 10
   update-alternatives --quiet --install /usr/bin/caddy caddy /usr/bin/caddy.custom 50
   update-alternatives --quiet --set caddy /usr/bin/caddy.custom
-  /usr/bin/caddy list-modules | grep -q '^http.handlers.waf$' || { echo "caddy binary has no waf module" >&2; exit 1; }
+  # the module list is read completely before it is searched: with pipefail, grep -q closing the pipe early
+  # would turn caddy's SIGPIPE into a failed check now and then
+  grep -qx 'http.handlers.waf' <<<"$(/usr/bin/caddy list-modules 2>/dev/null)" || { echo "caddy binary has no waf module" >&2; exit 1; }
 fi
 # caddy keeps the last config the daemon pushed and resumes it after a restart
 mkdir -p /etc/caddy
